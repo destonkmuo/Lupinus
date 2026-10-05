@@ -36,3 +36,11 @@ export const NAV_BY_KEY = Object.fromEntries(NAV_ITEMS.map((item) => [item.key, 
 export const NAV_LABELS = Object.fromEntries(
   NAV_ITEMS.map((item) => [item.key, item.label])
 ) as Record<NavKey, string>
+
+/**
+ * Pages with a dedicated full-size view (still tab-free). Every other page
+ * floats above the notes in a rounded window instead.
+ */
+export function isInlineNav(key: NavKey | null): key is 'home' | 'agent' {
+  return key === 'home' || key === 'agent'
+}

@@ -9,7 +9,8 @@ import TabBar from './components/TabBar'
 import TabSwitcher from './components/TabSwitcher'
 import Spotlight from './components/Spotlight'
 import { XIcon } from './components/icons'
-import { NAV_LABELS } from './nav'
+import { useTheme } from './theme'
+import { NAV_LABELS, isInlineNav } from './nav'
 import Agent from './pages/Agent'
 import Calendar from './pages/Calendar'
 import Email from './pages/Email'
@@ -42,8 +43,7 @@ function Content({ active }: { active: NavKey }): React.JSX.Element {
 }
 
 function renderTab(tab: Tab): ReactNode {
-  if (tab.kind === 'note') return <Note key={tab.id} noteId={tab.noteId} />
-  return <Content active={tab.kind} />
+  return <Note key={tab.id} noteId={tab.noteId} />
 }
 
 function SplitPaneHeader({
@@ -56,11 +56,7 @@ function SplitPaneHeader({
   const tabs = useAppStore((state) => state.tabs)
   const notes = useAppStore((state) => state.notes)
   const tab = tabs.find((t) => t.id === tabId)
-  const label = !tab
-    ? ''
-    : tab.kind === 'note'
-      ? notes.find((n) => n.id === tab.noteId)?.title.trim() || 'Untitled'
-      : NAV_LABELS[tab.kind]
+  const label = !tab ? '' : notes.find((n) => n.id === tab.noteId)?.title.trim() || 'Untitled'
   return (
     <div className="pane__header">
       <span className="pane__label" title={label}>
@@ -79,10 +75,68 @@ function SplitPaneHeader({
   )
 }
 
+/**
+ * Sidebar pages (Tasks, Calendar, …) float above the current note tab in a
+ * rounded window instead of replacing it — no tab clutter, and the note stays
+ * put underneath. Home and SeeMO keep their dedicated full-size views (see
+ * isInlineNav). Dismiss via the ✕ button, clicking the backdrop, or Esc.
+ * Remounts per page so each window opens fresh. The calendar gets a wider
+ * window for its grid.
+ */
+function NavFloat({ nav, onClose }: { nav: NavKey; onClose: () => void }): React.JSX.Element {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  const title = NAV_LABELS[nav]
+  return (
+    <div
+      className="navfloat__backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        className={`navfloat${nav === 'calendar' ? ' navfloat--wide' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className="navfloat__head">
+          <span className="navfloat__title" title={title}>
+            {title}
+          </span>
+          <button
+            type="button"
+            className="navfloat__close"
+            aria-label={`Close ${title}`}
+            title={`Close ${title} (Esc)`}
+            onClick={onClose}
+          >
+            <XIcon size={14} />
+          </button>
+        </div>
+        <div className="navfloat__body">
+          <Content key={nav} active={nav} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App(): React.JSX.Element {
+  useTheme()
   const tabs = useAppStore((state) => state.tabs)
   const activeTabId = useAppStore((state) => state.activeTabId)
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
+  // Sidebar pages (Home, Tasks, Calendar, …) float above the note tabs.
+  // Null means no floating window is open.
+  const activeNav = useAppStore((state) => state.activeNav)
+  const closeNav = useAppStore((state) => state.closeNav)
   const splitTabId = useAppStore((state) => state.splitTabId)
   const setSplitTab = useAppStore((state) => state.setSplitTab)
   const splitRatio = useAppStore((state) => state.splitRatio)
@@ -277,10 +331,16 @@ function App(): React.JSX.Element {
     splitTabId !== null && splitTabId !== activeTabId
       ? (tabs.find((t) => t.id === splitTabId) ?? null)
       : null
-  if (!activeTab) {
+  // Home and SeeMO render as dedicated full-size views (tab-free). Other
+  // pages float above the notes; with no note tabs open they render inline
+  // instead so a fresh vault never shows a blank shell.
+  const showFloat = activeNav !== null && !isInlineNav(activeNav) && activeTab !== null
+  if (activeNav !== null && (isInlineNav(activeNav) || !activeTab)) {
+    content = <Content active={activeNav} />
+  } else if (!activeTab) {
     content = (
       <main className="empty">
-        <p>No tabs open. Pick something from the sidebar.</p>
+        <p>No note tabs open. Pick a page above or a note from the sidebar.</p>
       </main>
     )
   } else if (splitTab) {
@@ -352,10 +412,8 @@ function App(): React.JSX.Element {
         </div>
       </>
     )
-  } else if (activeTab.kind === 'note') {
-    content = <Note key={activeTab.id} noteId={activeTab.noteId} />
   } else {
-    content = <Content active={activeTab.kind} />
+    content = <Note key={activeTab.id} noteId={activeTab.noteId} />
   }
 
   // Blank stage while checking; lock screen while gated. Nothing behind
@@ -384,6 +442,7 @@ function App(): React.JSX.Element {
           {content}
         </div>
       </div>
+      {showFloat && activeNav !== null && <NavFloat nav={activeNav} onClose={closeNav} />}
       <AgentBubble />
       <TabSwitcher />
       <Spotlight />

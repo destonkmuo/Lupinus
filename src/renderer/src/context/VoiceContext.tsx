@@ -62,19 +62,14 @@ export function VoiceProvider({ children }: { children: ReactNode }): React.JSX.
     }
   }, [])
 
-  // The SeeMO page has its own independent mute: on the page (active tab or
-  // split pane) voice is live unless the page is muted. Off the page the mic
-  // is effectively off unless Always listening is on. Anywhere voice isn't
+  // The SeeMO page has its own independent mute: on the page (sidebar view)
+  // voice is live unless the page is muted. Off the page the mic is
+  // effectively off unless Always listening is on. Anywhere voice isn't
   // live, input is ignored entirely: nothing in chat, no orb movement, no
   // replies.
   const isVoiceLive = (): boolean => {
-    const { tabs, activeTabId, splitTabId, backgroundListening, agentMicMuted } =
-      useAppStore.getState()
-    const onPage =
-      tabs.find((t) => t.id === activeTabId)?.kind === 'agent' ||
-      (splitTabId !== null &&
-        splitTabId !== activeTabId &&
-        tabs.find((t) => t.id === splitTabId)?.kind === 'agent')
+    const { activeNav, backgroundListening, agentMicMuted } = useAppStore.getState()
+    const onPage = activeNav === 'agent'
     return onPage ? !agentMicMuted : backgroundListening
   }
 

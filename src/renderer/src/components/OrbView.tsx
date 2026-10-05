@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import JarvisCore from './JarvisCore'
+import { useTheme } from '../theme'
 import { useAppStore, type CoreState } from '../store/appStore'
 
 // Same cadence as the main voice pipeline so both windows agree.
@@ -71,6 +72,7 @@ declare global {
 
 function OrbView(): React.JSX.Element {
   useOrbCore()
+  useTheme()
 
   // Drag-release also fires click on frameless drag regions: only a true
   // (near-stationary) click brings the app back, moving the orb never does.

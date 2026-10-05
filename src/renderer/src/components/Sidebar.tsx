@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { NAV_ITEMS } from '../nav'
+import { NAV_ITEMS, isInlineNav } from '../nav'
 import { buildNoteGraph, orderedNotes } from '../notes'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import { addHiddenPage, splitHidden } from '../subpages'
@@ -10,6 +10,7 @@ import {
   TRASH_RETENTION_MS,
   clampSidebarWidth,
   useAppStore,
+  type NavKey,
   type Note
 } from '../store/appStore'
 import {
@@ -29,7 +30,8 @@ import {
   SearchIcon,
   SettingsIcon,
   StarIcon,
-  TrashIcon
+  TrashIcon,
+  XIcon
 } from './icons'
 
 /** "9:00 AM" from an event start (all-day events have no time part). */
@@ -49,6 +51,16 @@ function formatClock(hhmm: string): string {
 }
 
 /**
+ * Sidebar pages float above the notes: clicking the open page's entry again
+ * dismisses its window (toggle), so the sidebar doubles as the close control.
+ */
+function toggleNav(key: NavKey): void {
+  const state = useAppStore.getState()
+  if (state.activeNav === key) state.closeNav()
+  else state.openNav(key)
+}
+
+/**
  * Today at a glance: today's calendar events (local + enabled subscriptions,
  * recurrence-aware) above today's tasks (due today or overdue). Replaces the
  * old "upcoming events" placeholder, which never showed anything actionable.
@@ -61,7 +73,6 @@ function TodaySection(): React.JSX.Element {
   const plannerReady = useAppStore((state) => state.plannerReady)
   const tasks = useAppStore((state) => state.tasks)
   const toggleTask = useAppStore((state) => state.toggleTask)
-  const openNav = useAppStore((state) => state.openNav)
 
   const today = todayISO()
 
@@ -96,7 +107,12 @@ function TodaySection(): React.JSX.Element {
     [tasks, today]
   )
 
-  const count = events.length + todaysTasks.length
+  const dismissed = useAppStore((state) => state.dismissedTodayEvents)
+  const dismissTodayEvent = useAppStore((state) => state.dismissTodayEvent)
+  const showAllTodayEvents = useAppStore((state) => state.showAllTodayEvents)
+  const visibleEvents = events.filter((event) => !dismissed.includes(event.id))
+  const hiddenCount = events.length - visibleEvents.length
+  const count = visibleEvents.length + todaysTasks.length
 
   return (
     <section className={`sidebar__events${open ? '' : ' is-collapsed'}`} aria-label="Today">
@@ -120,7 +136,7 @@ function TodaySection(): React.JSX.Element {
           className="sidebar__icon-btn"
           title="Open calendar"
           aria-label="Open calendar"
-          onClick={() => openNav('calendar')}
+          onClick={() => toggleNav('calendar')}
         >
           <CalendarIcon size={14} />
         </button>
@@ -128,20 +144,43 @@ function TodaySection(): React.JSX.Element {
       {/* Kept mounted for the expand/collapse glide; inert while shut. */}
       <div className="sidebar__today-body" inert={!open}>
         <div className="sidebar__today-body-inner">
-          {events.length > 0 && <p className="sidebar__today-group">Events</p>}
-          {events.map((event) => (
-            <button
+          {visibleEvents.length > 0 && <p className="sidebar__today-group">Events</p>}
+          {visibleEvents.map((event) => (
+            <div
               key={event.id}
-              type="button"
               className="sidebar__today-row"
               title={`${event.title} · ${event.time}`}
-              onClick={() => openNav('calendar')}
             >
-              <span className="sidebar__today-dot" style={{ background: event.color }} />
-              <span className="sidebar__today-time">{event.time}</span>
-              <span className="sidebar__label">{event.title}</span>
-            </button>
+              <button
+                type="button"
+                className="sidebar__today-open"
+                aria-label={`Open ${event.title} in calendar`}
+                onClick={() => toggleNav('calendar')}
+              >
+                <span className="sidebar__today-dot" style={{ background: event.color }} />
+                <span className="sidebar__today-time">{event.time}</span>
+                <span className="sidebar__label">{event.title}</span>
+              </button>
+              <button
+                type="button"
+                className="sidebar__icon-btn sidebar__today-hide"
+                title={`Hide ${event.title} from Today`}
+                aria-label={`Hide ${event.title} from Today`}
+                onClick={() => dismissTodayEvent(event.id)}
+              >
+                <XIcon size={12} />
+              </button>
+            </div>
           ))}
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              className="sidebar__today-hidden"
+              onClick={() => showAllTodayEvents()}
+            >
+              {hiddenCount} hidden · Show
+            </button>
+          )}
           {todaysTasks.length > 0 && <p className="sidebar__today-group">Tasks</p>}
           {todaysTasks.map((task) => (
             <div key={task.id} className="sidebar__today-row" title={task.title}>
@@ -179,11 +218,13 @@ function Sidebar(): React.JSX.Element {
   const activeTab = useAppStore(
     (state) => state.tabs.find((t) => t.id === state.activeTabId) ?? null
   )
+  // Nav destinations float above the notes: the sidebar selection tracks
+  // which floating window (if any) is open.
+  const activeNav = useAppStore((state) => state.activeNav)
   const notes = useAppStore((state) => state.notes)
   const noteOrder = useAppStore((state) => state.noteOrder)
   const query = useAppStore((state) => state.query)
   const coreState = useAppStore((state) => state.coreState)
-  const openNav = useAppStore((state) => state.openNav)
   const openNoteInCurrentTab = useAppStore((state) => state.openNoteInCurrentTab)
   const openNoteNewTab = useAppStore((state) => state.openNoteNewTab)
   const updateNote = useAppStore((state) => state.updateNote)
@@ -242,7 +283,12 @@ function Sidebar(): React.JSX.Element {
   const asideRef = useRef<HTMLElement>(null)
   const resizeStartRef = useRef({ x: 0, width: 0 })
 
-  const activeNoteId = activeTab?.kind === 'note' ? activeTab.noteId : null
+  // The note row stays lit while its tab is visible: always in note view,
+  // and behind floating windows — but not under Home/SeeMO's full-size views.
+  const activeNoteId =
+    activeTab?.kind === 'note' && (activeNav === null || !isInlineNav(activeNav))
+      ? activeTab.noteId
+      : null
   const needle = query.trim().toLowerCase()
 
   const matchesQuery = (note: Note): boolean =>
@@ -553,6 +599,8 @@ function Sidebar(): React.JSX.Element {
 
   // Split view for a note: reuse a background tab for it, or open a fresh
   // one beside the current tab when it is already showing the note.
+  // Nav views don't render splits, so splitting from a page first returns
+  // to the note tabs (keeping the previous note primary).
   const splitNote = (noteId: string): void => {
     const state = useAppStore.getState()
     const prevActive = state.activeTabId
@@ -560,6 +608,12 @@ function Sidebar(): React.JSX.Element {
       (t) => t.kind === 'note' && t.noteId === noteId && t.id !== prevActive
     )
     if (background) {
+      if (state.activeNav !== null) {
+        const prevTab = state.tabs.find((t) => t.id === prevActive)
+        if (prevTab) state.setActiveTab(prevTab.id)
+        else state.setActiveTab(background.id)
+        if (useAppStore.getState().activeTabId === background.id) return
+      }
       state.setSplitTab(background.id)
       return
     }
@@ -747,20 +801,33 @@ function Sidebar(): React.JSX.Element {
               <span className="sidebar__label">{note.title.trim() || 'Untitled'}</span>
             </button>
           )}
-          <button
-            type="button"
-            className="sidebar__icon-btn"
-            title="Note actions"
-            aria-label={`Actions for ${note.title || 'Untitled'}`}
-            aria-expanded={menu?.noteId === note.id}
-            onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect()
-              if (menu?.noteId === note.id) setMenu(null)
-              else openMenuAt(note.id, rect.right - 170, rect.bottom + 4)
-            }}
-          >
-            <MoreIcon size={15} />
-          </button>
+          <div className="sidebar__note-actions">
+            <button
+              type="button"
+              className="sidebar__icon-btn"
+              title="Note actions"
+              aria-label={`Actions for ${note.title || 'Untitled'}`}
+              aria-expanded={menu?.noteId === note.id}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                if (menu?.noteId === note.id) setMenu(null)
+                else openMenuAt(note.id, rect.right - 170, rect.bottom + 4)
+              }}
+            >
+              <MoreIcon size={15} />
+            </button>
+            {renamingNoteId !== note.id && (
+              <button
+                type="button"
+                className="sidebar__icon-btn sidebar__icon-btn--danger"
+                title={`Delete ${note.title.trim() || 'Untitled'}`}
+                aria-label={`Delete ${note.title.trim() || 'Untitled'}`}
+                onClick={() => trashNote(note)}
+              >
+                <TrashIcon size={14} />
+              </button>
+            )}
+          </div>
         </div>
         {kids.length > 0 && isOpen && (
           <ul className="sidebar__notes sidebar__notes--nested">
@@ -914,13 +981,13 @@ function Sidebar(): React.JSX.Element {
           {NAV_ITEMS.filter((item) => item.key !== 'settings' && item.key !== 'graph').map(
             (item) => {
               const Icon = item.icon
-              const isActive = activeTab?.kind === item.key
+              const isActive = activeNav === item.key
               return (
                 <button
                   key={item.key}
                   type="button"
                   className={`sidebar__row${isActive ? ' is-active' : ''}`}
-                  onClick={() => openNav(item.key)}
+                  onClick={() => toggleNav(item.key)}
                 >
                   <Icon size={16} />
                   <span className="sidebar__label">{item.label}</span>
@@ -935,10 +1002,11 @@ function Sidebar(): React.JSX.Element {
             <span className="sidebar__section-title">Notes</span>
             <button
               type="button"
-              className="sidebar__icon-btn"
+              className={`sidebar__icon-btn${activeNav === 'graph' ? ' is-active' : ''}`}
               title="Open graph"
               aria-label="Open graph"
-              onClick={() => openNav('graph')}
+              aria-pressed={activeNav === 'graph'}
+              onClick={() => toggleNav('graph')}
             >
               <GraphIcon size={22} />
             </button>
@@ -1261,10 +1329,11 @@ function Sidebar(): React.JSX.Element {
         </button>
         <button
           type="button"
-          className="sidebar__icon-btn sidebar__footer-btn"
+          className={`sidebar__icon-btn sidebar__footer-btn${activeNav === 'settings' ? ' is-active' : ''}`}
           title="Settings"
           aria-label="Settings"
-          onClick={() => openNav('settings')}
+          aria-pressed={activeNav === 'settings'}
+          onClick={() => toggleNav('settings')}
         >
           <SettingsIcon size={20} />
         </button>

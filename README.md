@@ -19,6 +19,7 @@ calendar, and a voice-driven assistant.
 - **Tasks & calendar** — todos with due dates, a month view, local + subscribed
   calendars, and reminders with sound.
 - **Graph view** — `[[wikilinks]]` between notes rendered as a knowledge graph.
+- **Light, dark, and system-synced themes** — switch in Settings.
 - **Voice assistant** — push-to-talk orb with transcripts, TTS replies, and an
   agentic core that can read and edit your notes.
 - **Local-first vault** — everything is stored under `~/Documents/SeeMO` as

@@ -397,6 +397,8 @@ function BlockEditor({
       setCaretHint('end')
       if (active === from) {
         setActive(insertAt)
+        // Carry the height floor along with the block being edited.
+        if (frozen && frozen.index === from) setFrozen({ index: insertAt, height: frozen.height })
       } else {
         const shifted = active - (from < active ? 1 : 0)
         setActive(shifted + (insertAt <= shifted ? 1 : 0))
@@ -477,8 +479,20 @@ function BlockEditor({
     moveBlock(from, blocks.length - 1, false)
   }
 
+  // Rendered Markdown carries paragraph/list/heading margins the editing
+  // surface doesn't, so opening a block would jump the page. Freeze the
+  // row at its rendered height while it is being edited instead.
+  const [frozen, setFrozen] = useState<{ index: number; height: number } | null>(null)
+  // The floor only applies while its row is the active one, so stale
+  // measurements can never stick to the rendered view (no cleanup effect
+  // needed — deactivation alone disables it).
+  const frozenFor = (index: number): number | undefined =>
+    frozen && frozen.index === index && active === index ? frozen.height : undefined
   const activate = (index: number, raw = false): void => {
     clearMulti()
+    const view = containerRef.current?.querySelector<HTMLElement>(`[data-row="${index}"] .block`)
+    const height = view?.offsetHeight ?? 0
+    if (height > 0) setFrozen({ index, height })
     caretRef.current = blocks[index]?.length ?? 0
     setCaretHint('end')
     setRawMode(raw)
@@ -902,6 +916,7 @@ function BlockEditor({
             key={`row-${index}`}
             data-row={index}
             className={`block-row${hint}${dragging}${isSel}`}
+            style={frozenFor(index) !== undefined ? { minHeight: frozenFor(index) } : undefined}
             onDragOver={(event) => onRowDragOver(event, index)}
             onDrop={(event) => onRowDrop(event, index)}
           >

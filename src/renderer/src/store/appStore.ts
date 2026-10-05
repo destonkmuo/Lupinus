@@ -58,10 +58,11 @@ export interface ImageLayout {
 }
 
 /**
- * An open tab. Notes are many-per-app; every nav destination is a singleton
- * (opening it again just focuses the existing tab).
+ * An open tab. Tabs are notes-only: nav destinations (Home, Tasks,
+ * Calendar, …) render as a sidebar-selected view and never occupy the tab
+ * bar, so clicking around the sidebar can't pile up tab clutter.
  */
-export type Tab = { id: string; kind: 'note'; noteId: string } | { id: string; kind: NavKey }
+export type Tab = { id: string; kind: 'note'; noteId: string }
 
 export interface ChatMessage {
   id: string
@@ -95,6 +96,9 @@ export function clampSplitRatio(ratio: unknown): number {
 
 /** Calendar display mode. Kept transient (not persisted). */
 export type CalendarView = 'month' | 'week' | 'day'
+
+/** Appearance: fixed dark/light, or follow the OS. */
+export type ThemeMode = 'dark' | 'light' | 'system'
 
 /** One daily clock alarm. `quietUntil` suppresses re-fire right after stop. */
 export interface AlarmItem {
@@ -163,6 +167,12 @@ interface AppState {
   noteSection: Record<string, string>
   tabs: Tab[]
   activeTabId: string | null
+  /**
+   * Sidebar-selected view. Non-null renders that page in the main content
+   * area instead of the note tabs (and never creates a tab). Null means the
+   * note tabs are showing.
+   */
+  activeNav: NavKey | null
   /** Tab ids, most-recently-active first. Powers the Ctrl+Tab switcher order. */
   tabRecency: string[]
   /** Linear visit history + cursor. Back/Forward step through it browser-style. */
@@ -186,9 +196,12 @@ interface AppState {
   orbEnabled: boolean
   lastSeenAgentId: string | null
   ttsEnabled: boolean
+  theme: ThemeMode
   sidebarWidth: number
   /** Sidebar hidden (Notion-style collapse). Persists across sessions. */
   sidebarCollapsed: boolean
+  /** Today-section event ids the user dismissed (hidden, not deleted). */
+  dismissedTodayEvents: string[]
   /** Tab pinned in the right split pane; null = no split. */
   splitTabId: string | null
   /** Left-pane share of split-view width, 0..1. */
@@ -209,8 +222,12 @@ interface AppState {
   setAgentMicMuted: (muted: boolean) => void
   setOrbEnabled: (enabled: boolean) => void
   setTtsEnabled: (enabled: boolean) => void
+  setTheme: (theme: ThemeMode) => void
   setSidebarWidth: (width: number) => void
   setSidebarCollapsed: (collapsed: boolean) => void
+  dismissTodayEvent: (id: string) => void
+  showTodayEvent: (id: string) => void
+  showAllTodayEvents: () => void
   toggleSidebar: () => void
   setSplitTab: (id: string | null) => void
   setSplitRatio: (ratio: number) => void
@@ -234,6 +251,7 @@ interface AppState {
   setAlarmSoundId: (id: string) => void
   setCustomAlarm: (custom: { name: string; url: string } | null) => void
   openNav: (kind: NavKey) => void
+  closeNav: () => void
   openNote: (noteId: string) => void
   closeTab: (id: string) => void
   closeAllTabs: () => void
@@ -346,10 +364,6 @@ function pruneTabGroupMap(map: Record<string, string>, keep: Set<string>): Recor
   return next
 }
 
-function navTab(kind: NavKey): Tab {
-  return { id: uid(), kind }
-}
-
 function noteTab(noteId: string): Tab {
   return { id: uid(), kind: 'note', noteId }
 }
@@ -407,7 +421,7 @@ function blankNote(): Note {
   }
 }
 
-const initialTab = navTab('home')
+const initialNav: NavKey = 'home'
 
 /** Guard so StrictMode double-mounts and manual refreshes share one load. */
 let vaultInitPromise: Promise<void> | null = null
@@ -692,11 +706,12 @@ export const useAppStore = create<AppState>()(
       favorites: [],
       imageLayout: {},
       renamingNoteId: null,
-      tabs: [initialTab],
-      activeTabId: initialTab.id,
-      tabRecency: [initialTab.id],
-      tabHistory: [initialTab.id],
-      historyIndex: 0,
+      tabs: [],
+      activeTabId: null,
+      activeNav: initialNav,
+      tabRecency: [],
+      tabHistory: [],
+      historyIndex: -1,
       tabGroups: [],
       tabGroup: {},
       collapsedTabGroups: [],
@@ -718,8 +733,10 @@ export const useAppStore = create<AppState>()(
       orbEnabled: true,
       lastSeenAgentId: null,
       ttsEnabled: true,
+      theme: 'dark',
       sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
       sidebarCollapsed: false,
+      dismissedTodayEvents: [],
       splitTabId: null,
       splitRatio: SPLIT_RATIO_DEFAULT,
       calendarView: 'month',
@@ -750,8 +767,20 @@ export const useAppStore = create<AppState>()(
       setAgentMicMuted: (agentMicMuted) => set({ agentMicMuted }),
       setOrbEnabled: (orbEnabled) => set({ orbEnabled }),
       setTtsEnabled: (ttsEnabled) => set({ ttsEnabled }),
+      setTheme: (theme) => set({ theme }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth: clampSidebarWidth(sidebarWidth) }),
       setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
+      dismissTodayEvent: (id) =>
+        set((state) => ({
+          dismissedTodayEvents: state.dismissedTodayEvents.includes(id)
+            ? state.dismissedTodayEvents
+            : [...state.dismissedTodayEvents, id]
+        })),
+      showTodayEvent: (id) =>
+        set((state) => ({
+          dismissedTodayEvents: state.dismissedTodayEvents.filter((d) => d !== id)
+        })),
+      showAllTodayEvents: () => set({ dismissedTodayEvents: [] }),
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setSplitTab: (splitTabId) => set({ splitTabId }),
       setSplitRatio: (splitRatio) => set({ splitRatio: clampSplitRatio(splitRatio) }),
@@ -767,6 +796,7 @@ export const useAppStore = create<AppState>()(
       setActiveTab: (id) =>
         set((state) => ({
           activeTabId: id,
+          activeNav: null,
           tabRecency: toFront(state.tabRecency, id),
           ...pushHistory(state.tabHistory, state.historyIndex, id)
         })),
@@ -776,7 +806,12 @@ export const useAppStore = create<AppState>()(
           if (index < 0) return {}
           const id = state.tabHistory[index]
           if (!state.tabs.some((t) => t.id === id)) return {}
-          return { activeTabId: id, historyIndex: index, tabRecency: toFront(state.tabRecency, id) }
+          return {
+            activeTabId: id,
+            activeNav: null,
+            historyIndex: index,
+            tabRecency: toFront(state.tabRecency, id)
+          }
         }),
       goForwardTab: () =>
         set((state) => {
@@ -784,7 +819,12 @@ export const useAppStore = create<AppState>()(
           if (index >= state.tabHistory.length) return {}
           const id = state.tabHistory[index]
           if (!state.tabs.some((t) => t.id === id)) return {}
-          return { activeTabId: id, historyIndex: index, tabRecency: toFront(state.tabRecency, id) }
+          return {
+            activeTabId: id,
+            activeNav: null,
+            historyIndex: index,
+            tabRecency: toFront(state.tabRecency, id)
+          }
         }),
       setCalendarView: (calendarView) => set({ calendarView }),
       setCalendarCursor: (calendarCursor) => set({ calendarCursor }),
@@ -873,23 +913,8 @@ export const useAppStore = create<AppState>()(
         })),
       setAlarmSoundId: (alarmSoundId) => set({ alarmSoundId }),
       setCustomAlarm: (customAlarm) => set({ customAlarm }),
-      openNav: (kind) =>
-        set((state) => {
-          const existing = state.tabs.find((t) => t.kind === kind)
-          if (existing)
-            return {
-              activeTabId: existing.id,
-              tabRecency: toFront(state.tabRecency, existing.id),
-              ...pushHistory(state.tabHistory, state.historyIndex, existing.id)
-            }
-          const tab = navTab(kind)
-          return {
-            tabs: [...state.tabs, tab],
-            activeTabId: tab.id,
-            tabRecency: toFront(state.tabRecency, tab.id),
-            ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
-          }
-        }),
+      openNav: (kind) => set({ activeNav: kind }),
+      closeNav: () => set({ activeNav: null }),
       openNote: (noteId) => {
         // Trashed notes never open; restore them from the Trash section first.
         if (get().notes.find((n) => n.id === noteId)?.deletedAt) return
@@ -898,6 +923,7 @@ export const useAppStore = create<AppState>()(
           if (existing)
             return {
               activeTabId: existing.id,
+              activeNav: null,
               tabRecency: toFront(state.tabRecency, existing.id),
               ...pushHistory(state.tabHistory, state.historyIndex, existing.id)
             }
@@ -905,6 +931,7 @@ export const useAppStore = create<AppState>()(
           return {
             tabs: [...state.tabs, tab],
             activeTabId: tab.id,
+            activeNav: null,
             tabRecency: toFront(state.tabRecency, tab.id),
             ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
           }
@@ -917,17 +944,23 @@ export const useAppStore = create<AppState>()(
           if (existing)
             return {
               activeTabId: existing.id,
+              activeNav: null,
               tabRecency: toFront(state.tabRecency, existing.id),
               ...pushHistory(state.tabHistory, state.historyIndex, existing.id)
             }
           // Reuse the active note tab instead of spawning tabs on every click.
-          const active = state.tabs.find((t) => t.id === state.activeTabId)
+          // When arriving from a nav view (activeNav set) there is no note
+          // tab to reuse yet if the tab list is empty — fall through and
+          // create one.
+          const active =
+            state.activeNav === null ? state.tabs.find((t) => t.id === state.activeTabId) : null
           if (active && active.kind === 'note') {
             return {
               tabs: state.tabs.map((t) =>
                 t.id === active.id && t.kind === 'note' ? { ...t, noteId } : t
               ),
               activeTabId: active.id,
+              activeNav: null,
               tabRecency: toFront(state.tabRecency, active.id),
               ...pushHistory(state.tabHistory, state.historyIndex, active.id)
             }
@@ -936,6 +969,7 @@ export const useAppStore = create<AppState>()(
           return {
             tabs: [...state.tabs, tab],
             activeTabId: tab.id,
+            activeNav: null,
             tabRecency: toFront(state.tabRecency, tab.id),
             ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
           }
@@ -947,6 +981,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           tabs: [...state.tabs, tab],
           activeTabId: tab.id,
+          activeNav: null,
           tabRecency: toFront(state.tabRecency, tab.id),
           ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
         }))
@@ -1029,17 +1064,15 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           const index = state.tabs.findIndex((t) => t.id === id)
           if (index < 0) return {}
-          let tabs = state.tabs.filter((t) => t.id !== id)
+          const tabs = state.tabs.filter((t) => t.id !== id)
           let activeTabId =
             state.activeTabId === id
               ? (tabs[index]?.id ?? tabs[index - 1]?.id ?? null)
               : state.activeTabId
-          // Never strand the app with zero tabs — fall back to Home.
-          if (tabs.length === 0) {
-            const home = navTab('home')
-            tabs = [home]
-            activeTabId = home.id
-          }
+          // Closing the last note tab lands back on Home rather than a
+          // blank shell; nav views never needed a tab at all.
+          const activeNav = tabs.length === 0 && state.activeNav === null ? 'home' : state.activeNav
+          if (tabs.length === 0) activeTabId = null
           // Closing the split tab itself dissolves the split.
           const splitTabId = state.splitTabId === id ? null : state.splitTabId
           const keep = new Set(tabs.map((t) => t.id))
@@ -1047,6 +1080,7 @@ export const useAppStore = create<AppState>()(
           return {
             tabs,
             activeTabId,
+            activeNav,
             splitTabId,
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
             ...(history.tabHistory.length > 0
@@ -1066,14 +1100,14 @@ export const useAppStore = create<AppState>()(
         return set((state) => {
           const kept = grouped(state.tabs, state.tabGroup)
           if (kept.length === 0) {
-            const home = navTab('home')
             return {
-              tabs: [home],
-              activeTabId: home.id,
+              tabs: [],
+              activeTabId: null,
+              activeNav: 'home' as NavKey,
               splitTabId: null,
-              tabRecency: [home.id],
-              tabHistory: [home.id],
-              historyIndex: 0,
+              tabRecency: [],
+              tabHistory: [],
+              historyIndex: -1,
               tabGroup: {}
             }
           }
@@ -1086,6 +1120,7 @@ export const useAppStore = create<AppState>()(
           return {
             tabs: kept,
             activeTabId,
+            activeNav: null,
             splitTabId: state.splitTabId && keep.has(state.splitTabId) ? state.splitTabId : null,
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
             ...(history.tabHistory.length > 0
@@ -1105,27 +1140,28 @@ export const useAppStore = create<AppState>()(
         return set((state) => {
           const closing = groupedIds(state)
           if (closing.size === 0) return {}
-          let tabs = state.tabs.filter((t) => !closing.has(t.id))
-          // Never strand the app with zero tabs — fall back to Home.
-          if (tabs.length === 0) {
-            const home = navTab('home')
-            tabs = [home]
-          }
+          const tabs = state.tabs.filter((t) => !closing.has(t.id))
           const keep = new Set(tabs.map((t) => t.id))
-          const activeTabId: string =
+          const activeTabId: string | null =
             state.activeTabId !== null && keep.has(state.activeTabId)
               ? state.activeTabId
-              : tabs[0].id
+              : (tabs[0]?.id ?? null)
+          // Draining the last note tab lands on Home instead of blank.
+          const activeNav: NavKey | null =
+            tabs.length === 0 && state.activeNav === null ? 'home' : state.activeNav
           const history = pruneHistory(state.tabHistory, state.historyIndex, keep)
           const remainingGroups = new Set(Object.values(pruneTabGroupMap(state.tabGroup, keep)))
           return {
             tabs,
             activeTabId,
+            activeNav,
             splitTabId: state.splitTabId && keep.has(state.splitTabId) ? state.splitTabId : null,
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
             ...(history.tabHistory.length > 0
               ? history
-              : { tabHistory: [activeTabId], historyIndex: 0 }),
+              : activeTabId
+                ? { tabHistory: [activeTabId], historyIndex: 0 }
+                : { tabHistory: [], historyIndex: -1 }),
             tabGroup: pruneTabGroupMap(state.tabGroup, keep),
             tabGroups: state.tabGroups.filter((g) => remainingGroups.has(g.id)),
             collapsedTabGroups: state.collapsedTabGroups.filter((id) => remainingGroups.has(id))
@@ -1269,6 +1305,7 @@ export const useAppStore = create<AppState>()(
             noteSection,
             tabs: [...state.tabs, tab],
             activeTabId: tab.id,
+            activeNav: null,
             tabRecency: toFront(state.tabRecency, tab.id),
             ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
           }
@@ -1320,6 +1357,9 @@ export const useAppStore = create<AppState>()(
           const activeTabId = tabs.some((t) => t.id === state.activeTabId)
             ? state.activeTabId
             : (tabs[0]?.id ?? null)
+          // Trashing the last open note reveals Home instead of blank.
+          const activeNav: NavKey | null =
+            tabs.length === 0 && state.activeNav === null ? 'home' : state.activeNav
           const splitTabId =
             state.splitTabId && tabs.some((t) => t.id === state.splitTabId)
               ? state.splitTabId
@@ -1328,7 +1368,8 @@ export const useAppStore = create<AppState>()(
           return {
             notes,
             tabs,
-            activeTabId,
+            activeTabId: tabs.length === 0 ? null : activeTabId,
+            activeNav,
             splitTabId,
             tabRecency: state.tabRecency.filter((t) => kept.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, kept),
@@ -1374,6 +1415,8 @@ export const useAppStore = create<AppState>()(
           const activeTabId = tabs.some((t) => t.id === state.activeTabId)
             ? state.activeTabId
             : (tabs[0]?.id ?? null)
+          const activeNav: NavKey | null =
+            tabs.length === 0 && state.activeNav === null ? 'home' : state.activeNav
           const splitTabId =
             state.splitTabId && tabs.some((t) => t.id === state.splitTabId)
               ? state.splitTabId
@@ -1387,7 +1430,8 @@ export const useAppStore = create<AppState>()(
             notes: state.notes.filter((n) => !ids.has(n.id)),
             noteOrder: state.noteOrder.filter((id) => !ids.has(id)),
             tabs,
-            activeTabId,
+            activeTabId: tabs.length === 0 ? null : activeTabId,
+            activeNav,
             splitTabId,
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, keep),
@@ -1409,6 +1453,8 @@ export const useAppStore = create<AppState>()(
           const activeTabId = tabs.some((t) => t.id === state.activeTabId)
             ? state.activeTabId
             : (tabs[0]?.id ?? null)
+          const activeNav: NavKey | null =
+            tabs.length === 0 && state.activeNav === null ? 'home' : state.activeNav
           const splitTabId =
             state.splitTabId && tabs.some((t) => t.id === state.splitTabId)
               ? state.splitTabId
@@ -1420,7 +1466,8 @@ export const useAppStore = create<AppState>()(
             notes,
             noteOrder,
             tabs,
-            activeTabId,
+            activeTabId: tabs.length === 0 ? null : activeTabId,
+            activeNav,
             splitTabId,
             tabRecency: state.tabRecency.filter((t) => kept.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, kept),
@@ -1514,13 +1561,18 @@ export const useAppStore = create<AppState>()(
                 )
               }
               const noteIds = new Set(retained.map((n) => n.id))
-              const tabs = state.tabs.filter(
-                (tab) => tab.kind !== 'note' || noteIds.has(tab.noteId)
+              // Tabs are notes-only; legacy nav tabs from older sessions are
+              // dropped here (their destination survives via activeNav).
+              const withTabs = state.tabs.filter(
+                (tab) => tab.kind === 'note' && noteIds.has(tab.noteId)
               )
-              const withTabs = tabs.length > 0 ? tabs : [navTab('home')]
               const activeTabId = withTabs.some((t) => t.id === state.activeTabId)
                 ? state.activeTabId
-                : withTabs[0].id
+                : (withTabs[0]?.id ?? null)
+              // Preserve the nav view; fall back to Home when there are no
+              // note tabs to show and no nav view is selected.
+              const activeNav: NavKey | null =
+                state.activeNav ?? (withTabs.length === 0 ? 'home' : null)
               const withTabIds = new Set(withTabs.map((t) => t.id))
               const keptHistory = pruneHistory(state.tabHistory, state.historyIndex, withTabIds)
               // Fresh vaults (or pre-history saves) start history at the
@@ -1542,6 +1594,7 @@ export const useAppStore = create<AppState>()(
                 noteOrder: [...unpositioned, ...keptOrder],
                 tabs: withTabs,
                 activeTabId,
+                activeNav,
                 tabRecency: [
                   ...state.tabRecency.filter((id) => withTabIds.has(id)),
                   ...withTabs.map((t) => t.id).filter((id) => !state.tabRecency.includes(id))
@@ -1979,6 +2032,7 @@ export const useAppStore = create<AppState>()(
         collapsedTabGroups: state.collapsedTabGroups,
         tabs: state.tabs,
         activeTabId: state.activeTabId,
+        activeNav: state.activeNav,
         tabRecency: state.tabRecency,
         tabHistory: state.tabHistory,
         historyIndex: state.historyIndex,
@@ -1989,8 +2043,10 @@ export const useAppStore = create<AppState>()(
         orbEnabled: state.orbEnabled,
         lastSeenAgentId: state.lastSeenAgentId,
         ttsEnabled: state.ttsEnabled,
+        theme: state.theme,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,
+        dismissedTodayEvents: state.dismissedTodayEvents,
         splitTabId: state.splitTabId,
         splitRatio: state.splitRatio,
         localCalendarColor: state.localCalendarColor,
@@ -2001,8 +2057,31 @@ export const useAppStore = create<AppState>()(
         customAlarm: state.customAlarm
       }),
       // Drop note tabs whose note no longer exists (e.g. after an older
-      // session) and always leave at least one tab open.
+      // session). Legacy nav tabs (Home, Tasks, …) migrate to the tab-free
+      // activeNav view instead of lingering in the tab bar.
       merge: (persisted, current) => {
+        const NAV_KEYS: NavKey[] = [
+          'home',
+          'graph',
+          'tasks',
+          'calendar',
+          'agent',
+          'misc',
+          'email',
+          'settings'
+        ]
+        const asNavKey = (value: unknown): NavKey | null =>
+          typeof value === 'string' && (NAV_KEYS as string[]).includes(value)
+            ? (value as NavKey)
+            : null
+        // Pre-rename / removed pages map onto a surviving destination.
+        const migrateNavKind = (kind: string): NavKey => {
+          if (kind === 'todo') return 'tasks'
+          if (kind === 'activity') return 'home'
+          if (kind === 'flashcards' || kind === 'learn' || kind === 'mindmap' || kind === 'quizzes')
+            return 'home'
+          return asNavKey(kind) ?? 'home'
+        }
         const saved = (persisted ?? {}) as Partial<
           Pick<
             AppState,
@@ -2017,6 +2096,7 @@ export const useAppStore = create<AppState>()(
             | 'collapsedTabGroups'
             | 'tabs'
             | 'activeTabId'
+            | 'activeNav'
             | 'tabRecency'
             | 'tabHistory'
             | 'historyIndex'
@@ -2027,8 +2107,10 @@ export const useAppStore = create<AppState>()(
             | 'orbEnabled'
             | 'lastSeenAgentId'
             | 'ttsEnabled'
+            | 'theme'
             | 'sidebarWidth'
             | 'sidebarCollapsed'
+            | 'dismissedTodayEvents'
             | 'splitTabId'
             | 'splitRatio'
             | 'localCalendarColor'
@@ -2041,28 +2123,31 @@ export const useAppStore = create<AppState>()(
         >
         const notes = saved.notes ?? []
         const noteIds = new Set(notes.map((n) => n.id))
-        const restored = (saved.tabs ?? [])
-          .map((tab): Tab => {
-            // Pre-rename sessions saved the task list as kind 'todo'.
-            if ((tab as { kind?: string }).kind === 'todo') return { id: tab.id, kind: 'tasks' }
-            // The SeeMO Activity page was removed; land those tabs on Home.
-            if ((tab as { kind?: string }).kind === 'activity') return { id: tab.id, kind: 'home' }
-            // Study sets live within notes now; old top-level tabs land Home.
-            if (
-              (tab as { kind?: string }).kind === 'flashcards' ||
-              (tab as { kind?: string }).kind === 'learn' ||
-              (tab as { kind?: string }).kind === 'mindmap' ||
-              (tab as { kind?: string }).kind === 'quizzes'
-            ) {
-              return { id: tab.id, kind: 'home' }
-            }
-            return tab
-          })
-          .filter((tab) => tab.kind !== 'note' || noteIds.has(tab.noteId))
-        const tabs = restored.length > 0 ? restored : [navTab('home')]
-        const activeTabId = tabs.some((t) => t.id === saved.activeTabId)
-          ? (saved.activeTabId as string)
-          : tabs[0].id
+        // The previously active nav tab (if any) becomes the selected view.
+        const legacyActiveNav = (() => {
+          const active = (saved.tabs ?? []).find((t) => t.id === saved.activeTabId) as
+            { kind?: unknown } | undefined
+          if (active && typeof active.kind === 'string' && active.kind !== 'note') {
+            return migrateNavKind(active.kind)
+          }
+          return null
+        })()
+        const tabs = (saved.tabs ?? []).filter(
+          (tab): tab is Tab => tab.kind === 'note' && noteIds.has(tab.noteId)
+        )
+        const activeTabId =
+          saved.activeTabId && tabs.some((t) => t.id === saved.activeTabId)
+            ? (saved.activeTabId as string)
+            : (tabs[0]?.id ?? null)
+        // New sessions persist the view directly; legacy sessions derive it
+        // from whichever nav tab was active.
+        let resolvedNav: NavKey | null
+        if (saved.activeNav === undefined) {
+          resolvedNav = legacyActiveNav ?? (activeTabId ? null : 'home')
+        } else {
+          resolvedNav = asNavKey(saved.activeNav)
+          if (resolvedNav === null && activeTabId === null) resolvedNav = 'home'
+        }
         // Recency survives restarts: keep known ids most-recent-first, then
         // append any restored tab the old list never saw.
         const tabIds = new Set(tabs.map((t) => t.id))
@@ -2070,11 +2155,11 @@ export const useAppStore = create<AppState>()(
           ...(saved.tabRecency ?? []).filter((id) => tabIds.has(id)),
           ...tabs.map((t) => t.id).filter((id) => !(saved.tabRecency ?? []).includes(id))
         ]
-        // History survives restarts too; seed from the active tab when the
-        // saved list is empty or predates this feature.
+        // History survives restarts too; it may legitimately be empty when
+        // there are no note tabs (nav views don't record tab history).
         const pruned = pruneHistory(saved.tabHistory ?? [], saved.historyIndex ?? -1, tabIds)
-        const tabHistory = pruned.tabHistory.length > 0 ? pruned.tabHistory : [activeTabId]
-        const historyIndex = pruned.tabHistory.length > 0 ? pruned.historyIndex : 0
+        const tabHistory = pruned.tabHistory
+        const historyIndex = pruned.historyIndex
         const messages = (saved.messages ?? []).slice(-MAX_CHAT_MESSAGES)
         const noteOrder = (saved.noteOrder ?? []).filter((id) => noteIds.has(id))
         // Sections survive restarts; drop mappings for notes or sections
@@ -2138,6 +2223,7 @@ export const useAppStore = create<AppState>()(
           collapsedTabGroups,
           tabs,
           activeTabId,
+          activeNav: resolvedNav,
           tabRecency,
           tabHistory,
           historyIndex,
@@ -2146,8 +2232,12 @@ export const useAppStore = create<AppState>()(
           backgroundListening: saved.backgroundListening ?? false,
           agentMicMuted: saved.agentMicMuted ?? false,
           ttsEnabled: saved.ttsEnabled ?? true,
+          theme: saved.theme === 'light' || saved.theme === 'system' ? saved.theme : 'dark',
           sidebarWidth: clampSidebarWidth(saved.sidebarWidth),
           sidebarCollapsed: saved.sidebarCollapsed ?? false,
+          dismissedTodayEvents: Array.isArray(saved.dismissedTodayEvents)
+            ? saved.dismissedTodayEvents.filter((d) => typeof d === 'string')
+            : [],
           splitTabId:
             saved.splitTabId && tabs.some((t) => t.id === saved.splitTabId)
               ? saved.splitTabId

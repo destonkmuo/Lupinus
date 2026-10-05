@@ -2,11 +2,12 @@
 
 :root {
   color-scheme: dark;
+  --ink: 255, 255, 255;
   --sidebar-bg: #1b1b1b;
   --main-bg: #202020;
-  --line: rgba(255, 255, 255, 0.08);
-  --hover: rgba(255, 255, 255, 0.055);
-  --hover-strong: rgba(255, 255, 255, 0.095);
+  --line: rgba(var(--ink), 0.08);
+  --hover: rgba(var(--ink), 0.055);
+  --hover-strong: rgba(var(--ink), 0.095);
   --accent: #6ab0ff;
   --danger: #ff6b6b;
 }
@@ -103,7 +104,7 @@ body {
   flex: none;
   padding: 8px 10px 8px 14px;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--ink), 0.02);
 }
 
 .pane__label {
@@ -141,7 +142,7 @@ body {
 }
 
 .pane__close:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(var(--ink), 0.14);
   color: var(--ev-c-text-1);
 }
 
@@ -182,6 +183,16 @@ body {
 
 .tabbar__list::-webkit-scrollbar {
   display: none;
+}
+
+/* Shown when every note tab is closed: pages live in the sidebar now, so
+   the bar only ever holds notes. */
+.tabbar__empty {
+  align-self: center;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--ev-c-text-3);
+  white-space: nowrap;
 }
 
 .tab {
@@ -230,7 +241,7 @@ body {
 
 .tab:hover {
   background: var(--hover);
-  border-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(var(--ink), 0.07);
 }
 
 .tab.is-active {
@@ -360,7 +371,7 @@ body {
 }
 
 .tab__close:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(var(--ink), 0.14);
   color: var(--ev-c-text-1);
 }
 
@@ -372,7 +383,7 @@ body {
   width: 26px;
   height: 26px;
   margin-bottom: 5px;
-  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border: 1px dashed rgba(var(--ink), 0.16);
   border-radius: 7px;
   background: transparent;
   color: var(--ev-c-text-2);
@@ -385,7 +396,7 @@ body {
 
 .tabbar__new:hover {
   background: var(--hover-strong);
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: rgba(var(--ink), 0.3);
   color: var(--ev-c-text-1);
 }
 
@@ -396,7 +407,7 @@ body {
 
 .tabbar__new:disabled:hover {
   background: transparent;
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(var(--ink), 0.16);
   color: var(--ev-c-text-2);
 }
 
@@ -469,7 +480,7 @@ body {
 }
 
 .sidebar__top {
-  padding: 10px 10px 6px;
+  padding: 10px 10px 2px;
 }
 
 .sidebar__search {
@@ -477,16 +488,27 @@ body {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  padding: 0 8px;
-  height: 30px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  padding: 0 10px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: rgba(var(--ink), 0.05);
   color: var(--ev-c-text-3);
   cursor: text;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.sidebar__search:hover {
+  background: rgba(var(--ink), 0.07);
 }
 
 .sidebar__search:focus-within {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
+  border-color: rgba(106, 176, 255, 0.35);
+  box-shadow: 0 0 0 3px rgba(106, 176, 255, 0.12);
   color: var(--ev-c-text-2);
 }
 
@@ -523,7 +545,24 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 10px 12px 6px;
+  padding: 2px 10px 12px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ink), 0.16) transparent;
+}
+
+.sidebar__scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar__scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+  background-color: rgba(var(--ink), 0.14);
+}
+
+.sidebar__scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Trash pinned to the very bottom, below the scroll region. It caps its own
@@ -560,13 +599,14 @@ body {
 }
 
 .sidebar__row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
   padding: 6px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 9px;
   background: transparent;
   color: var(--ev-c-text-2);
   font: inherit;
@@ -574,18 +614,35 @@ body {
   text-align: left;
   cursor: pointer;
   transition:
-    background-color 120ms ease,
-    color 120ms ease;
+    background-color 160ms cubic-bezier(0.32, 0.72, 0, 1),
+    color 160ms ease,
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar__row:hover {
   background: var(--hover);
   color: var(--ev-c-text-1);
+  transform: translateX(1px);
+}
+
+.sidebar__row:active {
+  transform: translateX(0) scale(0.99);
 }
 
 .sidebar__row.is-active {
-  background: var(--hover-strong);
+  background: rgba(106, 176, 255, 0.12);
   color: var(--ev-c-text-1);
+}
+
+.sidebar__row.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .sidebar__label {
@@ -621,6 +678,7 @@ body {
   font: inherit;
   cursor: pointer;
   border-radius: 6px;
+  transition: color 160ms ease;
 }
 
 .sidebar__section-head--toggle:hover {
@@ -631,9 +689,35 @@ body {
   color: var(--ev-c-text-1);
 }
 
+/* Today + Trash headers sit beside an action button, so a block hover pill
+   only covers part of the row and reads as a stray bar. Keep them
+   background-free: hover brightens the title and nudges the chevron. */
+.sidebar__today-head .sidebar__section-head--toggle:hover,
+.sidebar__trash-head:hover {
+  background: transparent;
+}
+
+.sidebar__today-head .sidebar__section-head--toggle:hover .sidebar__section-title,
+.sidebar__trash-head:hover .sidebar__section-title {
+  color: var(--ev-c-text-1);
+}
+
+.sidebar__today-head .sidebar__section-head--toggle:hover .sidebar__chevron,
+.sidebar__trash-head:hover .sidebar__chevron {
+  color: var(--ev-c-text-1);
+  transform: translateY(1px);
+}
+
+.sidebar__today-head .sidebar__section-head--toggle:hover .sidebar__chevron.is-open,
+.sidebar__trash-head:hover .sidebar__chevron.is-open {
+  transform: rotate(180deg) translateY(-1px);
+}
+
 .sidebar__chevron {
   color: var(--ev-c-text-3);
-  transition: transform 150ms ease;
+  transition:
+    transform 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    color 160ms ease;
 }
 
 .sidebar__chevron.is-open {
@@ -641,11 +725,11 @@ body {
 }
 
 .sidebar__events {
-  margin: 10px 0 4px;
+  margin: 4px 0 8px;
   padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 @keyframes today-row-in {
@@ -715,9 +799,10 @@ body {
   animation-delay: 150ms;
 }
 
-/* "Today" rows: compact event/task lines under the agenda header. */
+/* "Today" rows: flat list lines — hover washes the row instead of a
+   bordered card popping in, which read as visual noise. */
 .sidebar__today-head {
-  padding: 0 2px 6px;
+  padding: 0 4px 6px;
 }
 
 /* Collapsed: drop the header's bottom padding so it doesn't stack with the
@@ -760,27 +845,24 @@ body {
   margin-top: 0;
 }
 
-/* "Today" rows: compact event/task lines under the agenda header. */
-.sidebar__today-head .sidebar__section-head--toggle {
-  width: auto;
-  flex: 1;
-  min-width: 0;
-}
-
 .sidebar__today-row {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  margin-top: 2px;
+  margin-top: 1px;
   padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  border: none;
+  border-radius: 9px;
+  background: transparent;
   color: var(--ev-c-text-2);
   font: inherit;
   font-size: 12.5px;
   text-align: left;
+  transition:
+    background-color 160ms cubic-bezier(0.32, 0.72, 0, 1),
+    color 160ms ease,
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 button.sidebar__today-row {
@@ -788,8 +870,58 @@ button.sidebar__today-row {
 }
 
 button.sidebar__today-row:hover {
-  background: var(--hover);
-  border-color: var(--line);
+  background: rgba(var(--ink), 0.06);
+  color: var(--ev-c-text-1);
+}
+
+/* Dismissable event rows: the label opens the calendar, × hides the row. */
+.sidebar__today-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+div.sidebar__today-row:hover {
+  background: rgba(var(--ink), 0.06);
+  color: var(--ev-c-text-1);
+}
+
+.sidebar__today-hide {
+  opacity: 0;
+  transform: scale(0.85);
+  transition:
+    opacity 160ms ease,
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 160ms ease;
+}
+
+div.sidebar__today-row:hover .sidebar__today-hide,
+.sidebar__today-hide:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.sidebar__today-hidden {
+  border: none;
+  background: transparent;
+  color: var(--ev-c-text-3);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar__today-hidden:hover {
   color: var(--ev-c-text-1);
 }
 
@@ -832,7 +964,7 @@ button.sidebar__today-row:hover {
   padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
   color: var(--ev-c-text-2);
   font: inherit;
   text-align: left;
@@ -845,7 +977,7 @@ button.sidebar__today-row:hover {
 
 .sidebar__connect:hover {
   background: var(--hover);
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(var(--ink), 0.16);
   color: var(--ev-c-text-1);
 }
 
@@ -882,15 +1014,25 @@ button.sidebar__today-row:hover {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--ev-c-text-3);
   cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar__icon-btn:hover {
-  background: var(--hover-strong);
+  background: rgba(var(--ink), 0.09);
   color: var(--ev-c-text-1);
+  transform: translateY(-1px);
+}
+
+.sidebar__icon-btn:active {
+  transform: translateY(0) scale(0.94);
 }
 
 .sidebar__icon-btn--danger:hover {
@@ -901,9 +1043,18 @@ button.sidebar__today-row:hover {
 .sidebar__notes {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   /* Kill the browser's default 40px list indent so rows hug the left edge. */
   padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.sidebar__notes--nested {
+  position: relative;
+  margin-left: 13px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(var(--ink), 0.07);
 }
 
 /* Custom note sections: draggable divider headers grouping roots. */
@@ -920,8 +1071,13 @@ button.sidebar__today-row:hover {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: grab;
+  transition: background-color 160ms ease;
+}
+
+.sidebar__divider:hover {
+  background: rgba(var(--ink), 0.04);
 }
 
 .sidebar__divider:active {
@@ -952,16 +1108,19 @@ button.sidebar__today-row:hover {
   gap: 7px;
   padding: 4px 6px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--ev-c-text-3);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
 .sidebar__divider-main:hover {
-  background: var(--hover);
+  background: rgba(var(--ink), 0.06);
   color: var(--ev-c-text-1);
 }
 
@@ -974,21 +1133,23 @@ button.sidebar__today-row:hover {
 
 .sidebar__divider .sidebar__icon-btn {
   opacity: 0;
+  transform: scale(0.85);
 }
 
 .sidebar__divider:hover .sidebar__icon-btn,
 .sidebar__divider:focus-within .sidebar__icon-btn {
   opacity: 1;
+  transform: none;
 }
 
 .sidebar__divider-input {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(var(--ink), 0.25);
   border-radius: 6px;
   outline: none;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
   color: var(--ev-c-text-1);
   font: inherit;
   font-size: 12.5px;
@@ -1032,10 +1193,10 @@ button.sidebar__today-row:hover {
   min-width: 0;
   margin: 3px 0;
   padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(var(--ink), 0.25);
   border-radius: 6px;
   outline: none;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
   color: var(--ev-c-text-1);
   font: inherit;
   font-size: 13px;
@@ -1227,7 +1388,7 @@ button.sidebar__today-row:hover {
 
 .tabgroup__input {
   width: 110px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(var(--ink), 0.25);
   border-radius: 5px;
   outline: none;
   background: rgba(0, 0, 0, 0.35);
@@ -1328,10 +1489,6 @@ button.sidebar__today-row:hover {
   color: var(--danger);
 }
 
-.sidebar__trash-head:hover {
-  background: var(--hover);
-}
-
 .sidebar__trash-head .sidebar__section-title {
   display: inline-flex;
   align-items: center;
@@ -1405,23 +1562,29 @@ button.sidebar__today-row:hover {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
-  border-radius: 6px;
+  padding: 3px 6px;
+  border-radius: 8px;
   color: var(--ev-c-text-3);
   font-size: 11px;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
 .sidebar__trash-row:hover {
-  background: var(--hover);
+  background: rgba(var(--ink), 0.05);
   color: var(--ev-c-text-2);
 }
 
 .sidebar__trash-row .sidebar__icon-btn {
   opacity: 0;
+  transform: scale(0.85);
 }
 
-.sidebar__trash-row:hover .sidebar__icon-btn {
+.sidebar__trash-row:hover .sidebar__icon-btn,
+.sidebar__trash-row:focus-within .sidebar__icon-btn {
   opacity: 1;
+  transform: none;
 }
 
 .sidebar__trash-days {
@@ -1431,19 +1594,29 @@ button.sidebar__today-row:hover {
 }
 
 .sidebar__row--note:hover {
-  background: var(--hover);
+  background: rgba(var(--ink), 0.06);
 }
 
 .sidebar__row--note .sidebar__icon-btn {
   opacity: 0;
+  transform: scale(0.85);
 }
 
-.sidebar__row--note:hover .sidebar__icon-btn {
+.sidebar__row--note:hover .sidebar__icon-btn,
+.sidebar__row--note:focus-within .sidebar__icon-btn {
   opacity: 1;
+  transform: none;
 }
 
 .sidebar__row--note .sidebar__note-main {
   padding-left: 4px;
+}
+
+.sidebar__note-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
 }
 
 .sidebar__row--note .sidebar__label {
@@ -1478,6 +1651,7 @@ button.sidebar__today-row:hover {
   gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--line);
+  background: rgba(var(--ink), 0.015);
   font-size: 12px;
   color: var(--ev-c-text-3);
 }
@@ -1501,6 +1675,21 @@ button.sidebar__today-row:hover {
 .sidebar__footer-btn.is-muted:hover {
   background: rgba(255, 157, 46, 0.24);
   color: #ff9d2e;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar__row,
+  .sidebar__today-row,
+  .sidebar__icon-btn,
+  .sidebar__twisty,
+  .sidebar__chevron,
+  .sidebar__twisty svg {
+    transition: none;
+    transform: none;
+  }
+  .sidebar__today-body-inner > * {
+    animation: none;
+  }
 }
 
 .sidebar__state {
@@ -1886,20 +2075,28 @@ button.sidebar__today-row:hover {
   width: 24px;
   height: 24px;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--ev-c-text-3);
   cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar__twisty:hover {
-  background: var(--hover-strong);
+  background: rgba(var(--ink), 0.09);
   color: var(--ev-c-text-1);
+}
+
+.sidebar__twisty:active {
+  transform: scale(0.9);
 }
 
 .sidebar__twisty svg {
   transform: rotate(-90deg);
-  transition: transform 150ms ease;
+  transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar__twisty.is-open svg {
@@ -2031,7 +2228,7 @@ button.sidebar__today-row:hover {
 }
 
 .block:hover {
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(var(--ink), 0.035);
 }
 
 .block > *:first-child {
@@ -2125,7 +2322,7 @@ button.sidebar__today-row:hover {
 .rblock .md-img {
   padding: 0 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
   color: var(--ev-c-text-2);
   font-size: 0.85em;
 }
@@ -2301,14 +2498,14 @@ button.sidebar__today-row:hover {
 .markdown blockquote {
   margin: 14px 0;
   padding: 2px 0 2px 14px;
-  border-left: 3px solid rgba(255, 255, 255, 0.18);
+  border-left: 3px solid rgba(var(--ink), 0.18);
   color: var(--ev-c-text-2);
 }
 
 .markdown code {
   padding: 2px 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.09);
+  background: rgba(var(--ink), 0.09);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.88em;
 }
@@ -2359,7 +2556,7 @@ button.sidebar__today-row:hover {
 }
 
 .markdown__wiki--missing:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--ink), 0.06);
   color: var(--ev-c-text-1);
 }
 
@@ -2439,7 +2636,7 @@ button.sidebar__today-row:hover {
   margin: 0 24px 24px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.015);
+  background: rgba(var(--ink), 0.015);
   overflow: hidden;
 }
 
@@ -2509,7 +2706,7 @@ button.sidebar__today-row:hover {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -2521,7 +2718,7 @@ button.sidebar__today-row:hover {
 
 .home__card:hover {
   background: var(--hover);
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(var(--ink), 0.16);
 }
 
 .home__card-title {
@@ -2557,7 +2754,7 @@ button.sidebar__today-row:hover {
 
 .home__empty:hover {
   color: var(--ev-c-text-1);
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(var(--ink), 0.2);
 }
 
 .section__body {
@@ -2626,7 +2823,7 @@ button.sidebar__today-row:hover {
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
   color: var(--ev-c-text-1);
   font: inherit;
   font-size: 13px;
@@ -2635,7 +2832,7 @@ button.sidebar__today-row:hover {
 }
 
 .settings__input:focus {
-  border-color: rgba(255, 255, 255, 0.25);
+  border-color: rgba(var(--ink), 0.25);
 }
 
 .settings__check {
@@ -2675,12 +2872,12 @@ button.sidebar__today-row:hover {
 }
 
 .btn--ghost {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--ink), 0.06);
   color: var(--ev-c-text-1);
 }
 
 .btn--ghost:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(var(--ink), 0.12);
 }
 
 /* Non-interactive state readout pill (states are voice-driven, not clickable). */
@@ -2711,7 +2908,7 @@ button.sidebar__today-row:hover {
   padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
 }
 
 .vault-card__info {
@@ -2816,7 +3013,7 @@ button.sidebar__today-row:hover {
   padding: 28px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
   animation: drop-hint-in 180ms ease;
 }
@@ -2938,13 +3135,13 @@ body.is-orb {
   height: 44px;
   border: 1px solid var(--line);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--ink), 0.06);
   color: var(--ev-c-text-1);
   cursor: pointer;
 }
 
 .agent__mute-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(var(--ink), 0.12);
 }
 
 .agent__mute-btn.is-muted {
@@ -3054,7 +3251,7 @@ body.is-orb {
 }
 
 .chat__mute:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
   color: var(--ev-c-text-1);
 }
 
@@ -3105,7 +3302,7 @@ body.is-orb {
 }
 
 .msg--agent .msg__bubble {
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(var(--ink), 0.07);
   border-bottom-left-radius: 5px;
   color: var(--ev-c-text-1);
 }
@@ -3131,7 +3328,7 @@ body.is-orb {
   padding: 9px 13px;
   border: 1px solid var(--line);
   border-radius: 13px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
   color: var(--ev-c-text-1);
   font: inherit;
   font-size: 13.5px;
@@ -3142,7 +3339,7 @@ body.is-orb {
 }
 
 .chat__input:focus {
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: rgba(var(--ink), 0.24);
 }
 
 .chat__input::placeholder {
@@ -3373,7 +3570,7 @@ body.is-orb {
   gap: 2px;
   padding: 2px;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
 }
 
 .cal__seg-btn {
@@ -3393,7 +3590,7 @@ body.is-orb {
 }
 
 .cal__seg-btn.is-active {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(var(--ink), 0.12);
   color: var(--ev-c-text-1);
 }
 
@@ -3449,7 +3646,7 @@ body.is-orb {
 }
 
 .cal-cell:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
 }
 
 .cal-cell.is-dim {
@@ -3602,7 +3799,7 @@ body.is-orb {
 }
 
 button.cal-week__day:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--ink), 0.03);
 }
 
 .cal-week__dow {
@@ -3666,7 +3863,7 @@ button.cal-week__day:hover {
 
 .cal-hour {
   position: relative;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(var(--ink), 0.05);
 }
 
 .cal-hour span {
@@ -3686,7 +3883,7 @@ button.cal-week__day:hover {
 }
 
 .cal-col__hour {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(var(--ink), 0.05);
 }
 
 .cal-now {
@@ -3801,7 +3998,7 @@ button.cal-week__day:hover {
 .routine {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
   padding: 6px 8px;
 }
 
@@ -3889,7 +4086,7 @@ button.cal-week__day:hover {
   height: 4px;
   margin: 6px 2px 2px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
   overflow: hidden;
 }
 
@@ -4245,7 +4442,7 @@ button.cal-week__day:hover {
   padding: 2px;
   margin-bottom: 12px;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
 }
 
 .dlg__seg-btn {
@@ -4270,7 +4467,7 @@ button.cal-week__day:hover {
 }
 
 .dlg__seg-btn.is-active {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(var(--ink), 0.12);
   color: var(--ev-c-text-1);
 }
 
@@ -4294,7 +4491,7 @@ button.cal-week__day:hover {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
   color: var(--ev-c-text-1);
   font: inherit;
   font-size: 13.5px;
@@ -4303,7 +4500,7 @@ button.cal-week__day:hover {
 }
 
 .dlg__input:focus {
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: rgba(var(--ink), 0.24);
 }
 
 .dlg__input:disabled {
@@ -4424,12 +4621,12 @@ button.cal-week__day:hover {
 }
 
 .miniapp__name:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
   border-radius: 6px;
 }
 
 .miniapp__name:focus {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
   border-radius: 6px;
   outline: 1px solid var(--accent);
 }
@@ -4468,13 +4665,18 @@ button.cal-week__day:hover {
   color: var(--danger);
 }
 
+/* Appearance segmented control reuses the kind toggle. */
+.settings__theme {
+  max-width: 320px;
+}
+
 /* Countdown / Pomodoro type switch on timer cards. */
 .kind-toggle {
   display: flex;
   gap: 4px;
   padding: 3px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
 }
 
 .kind-toggle__btn {
@@ -4498,7 +4700,7 @@ button.cal-week__day:hover {
 }
 
 .kind-toggle__btn.is-active {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(var(--ink), 0.1);
   color: var(--ev-c-text-1);
 }
 
@@ -4565,7 +4767,7 @@ button.cal-week__day:hover {
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
 }
 
 .miniapp.is-ringing {
@@ -4631,7 +4833,7 @@ select.dlg__input {
 .miniapp__bar {
   height: 6px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
   overflow: hidden;
 }
 
@@ -4778,7 +4980,7 @@ select.dlg__input {
   padding: 3px 4px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
   color: var(--ev-c-text-2);
   font: inherit;
   font-size: 10.5px;
@@ -4856,7 +5058,7 @@ select.dlg__input {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--ink), 0.02);
 }
 
 .dlg__weekdays {
@@ -5187,6 +5389,84 @@ select.dlg__input {
   color: var(--ev-c-text-3);
 }
 
+/* ------------------------------------------ floating sidebar-page window */
+
+.navfloat__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.navfloat {
+  width: min(980px, 100%);
+  height: min(82vh, 100%);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #232323;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  animation: content-in 0.16s ease;
+}
+
+/* The calendar grid needs room to breathe. */
+.navfloat--wide {
+  width: min(1240px, 100%);
+}
+
+.navfloat__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 12px 12px 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.navfloat__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ev-c-text-1);
+}
+
+.navfloat__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ev-c-text-3);
+  cursor: pointer;
+}
+
+.navfloat__close:hover {
+  background: var(--hover-strong);
+  color: var(--ev-c-text-1);
+}
+
+.navfloat__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* Graph node color legend (isolated / linked / hub). */
 .graph__legend {
   display: flex;
@@ -5226,7 +5506,7 @@ select.dlg__input {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
 }
 
 .home__stat-value {
@@ -5257,7 +5537,7 @@ select.dlg__input {
   padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(var(--ink), 0.025);
   color: var(--ev-c-text-2);
   font: inherit;
   text-align: left;
@@ -5269,7 +5549,7 @@ select.dlg__input {
 
 .home__today-row:hover {
   background: var(--hover);
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(var(--ink), 0.16);
   color: var(--ev-c-text-1);
 }
 
@@ -5339,7 +5619,7 @@ select.dlg__input {
   gap: 8px;
   padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--ink), 0.03);
 }
 
 .codeblock__lang {
@@ -5486,10 +5766,10 @@ select.dlg__input {
 /* ------------------------------------------------------------ hidden footer */
 .hidden-footer {
   margin-top: 28px;
-  border: 1px dashed var(--line, rgba(255, 255, 255, 0.18));
+  border: 1px dashed var(--line, rgba(var(--ink), 0.18));
   border-radius: 12px;
   padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--ink), 0.02);
 }
 .hidden-footer__head {
   display: flex;
@@ -5540,8 +5820,8 @@ select.dlg__input {
   gap: 7px;
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line, rgba(var(--ink), 0.12));
+  background: rgba(var(--ink), 0.04);
   color: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -5681,8 +5961,8 @@ select.dlg__input {
   align-self: center;
   padding: 3px;
   border-radius: 999px;
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line, rgba(var(--ink), 0.12));
+  background: rgba(var(--ink), 0.04);
 }
 
 .study__tab {
@@ -5724,7 +6004,7 @@ select.dlg__input {
 
 .study__deck-desc:hover,
 .study__deck-desc:focus {
-  border-bottom-color: var(--line, rgba(255, 255, 255, 0.2));
+  border-bottom-color: var(--line, rgba(var(--ink), 0.2));
   color: inherit;
 }
 
@@ -5743,7 +6023,7 @@ select.dlg__input {
   height: 6px;
   min-width: 60px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--ink), 0.08);
   overflow: hidden;
 }
 
@@ -5768,10 +6048,10 @@ select.dlg__input {
   position: relative;
   min-height: 300px;
   border-radius: 20px;
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--line, rgba(var(--ink), 0.12));
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(63, 143, 255, 0.12), transparent 60%),
-    rgba(255, 255, 255, 0.03);
+    rgba(var(--ink), 0.03);
   color: inherit;
   cursor: pointer;
   display: block;
@@ -5919,13 +6199,13 @@ select.dlg__input {
 }
 
 .cards__row:hover {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: var(--line, rgba(255, 255, 255, 0.08));
+  background: rgba(var(--ink), 0.03);
+  border-color: var(--line, rgba(var(--ink), 0.08));
 }
 
 .cards__row input {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  background: rgba(var(--ink), 0.04);
+  border: 1px solid var(--line, rgba(var(--ink), 0.1));
   border-radius: 10px;
   color: inherit;
   padding: 9px 12px;
@@ -5941,7 +6221,7 @@ select.dlg__input {
 .cards__row input:focus {
   border-color: rgba(63, 143, 255, 0.6);
   box-shadow: 0 0 0 3px rgba(63, 143, 255, 0.15);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink), 0.05);
 }
 
 .cards__num {
@@ -6016,10 +6296,10 @@ select.dlg__input {
   position: relative;
   max-height: 230px;
   overflow-y: auto;
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  border: 1px solid var(--line, rgba(var(--ink), 0.1));
   border-radius: 14px;
   padding: 6px;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--ink), 0.02);
 }
 
 .terms-list__items {
@@ -6040,7 +6320,7 @@ select.dlg__input {
 }
 
 .terms-list__row + .terms-list__row {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(var(--ink), 0.06);
 }
 
 .terms-list__num {
@@ -6066,7 +6346,7 @@ select.dlg__input {
 
 /* Learn mode. */
 .learn__card {
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--line, rgba(var(--ink), 0.12));
   border-radius: 18px;
   padding: 26px 24px;
   display: flex;
@@ -6075,7 +6355,7 @@ select.dlg__input {
   text-align: center;
   background:
     radial-gradient(120% 80% at 50% 0%, rgba(63, 143, 255, 0.09), transparent 65%),
-    rgba(255, 255, 255, 0.02);
+    rgba(var(--ink), 0.02);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.24);
   animation: study-rise 300ms ease both;
 }
@@ -6096,8 +6376,8 @@ select.dlg__input {
   text-align: center;
   padding: 13px 16px;
   border-radius: 12px;
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line, rgba(var(--ink), 0.12));
+  background: rgba(var(--ink), 0.03);
   color: inherit;
   font-size: 14px;
   cursor: pointer;
@@ -6138,8 +6418,8 @@ select.dlg__input {
 
 .learn__written input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  background: rgba(var(--ink), 0.04);
+  border: 1px solid var(--line, rgba(var(--ink), 0.12));
   border-radius: 12px;
   color: inherit;
   padding: 12px 14px;
@@ -6182,7 +6462,7 @@ select.dlg__input {
 
 .mindmap__kids {
   margin-left: 16px;
-  border-left: 1px dashed var(--line, rgba(255, 255, 255, 0.15));
+  border-left: 1px dashed var(--line, rgba(var(--ink), 0.15));
   padding-left: 10px;
   display: flex;
   flex-direction: column;
@@ -6200,10 +6480,10 @@ select.dlg__input {
   display: flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--line, rgba(var(--ink), 0.12));
   border-radius: 12px;
   padding: 7px 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--ink), 0.03);
   transition:
     border-color 160ms ease,
     box-shadow 180ms ease,
@@ -6255,18 +6535,18 @@ select.dlg__input {
 
 .mindmap__tools button:hover {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(var(--ink), 0.07);
 }
 
 .mindmap__preview {
-  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  border: 1px solid var(--line, rgba(var(--ink), 0.1));
   border-radius: 16px;
   padding: 12px;
   overflow: auto;
   max-height: 560px;
   background:
     radial-gradient(100% 60% at 50% 0%, rgba(63, 143, 255, 0.06), transparent 70%),
-    rgba(255, 255, 255, 0.015);
+    rgba(var(--ink), 0.015);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
   animation: study-rise 320ms ease both;
 }
@@ -6325,7 +6605,7 @@ select.dlg__input {
   gap: 8px;
   padding: 12px 40px 12px 18px;
   border-radius: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(var(--ink), 0.1);
   background: #3a4157;
   color: #eceef5;
   font-size: 13.5px;
@@ -6388,7 +6668,7 @@ select.dlg__input {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(var(--ink), 0.14);
   background: #232838;
   color: #c6cbdd;
   font-size: 14px;
@@ -6432,7 +6712,7 @@ select.dlg__input {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(var(--ink), 0.16);
   background: #232838;
   color: #dfe3f0;
   cursor: pointer;
@@ -6457,7 +6737,7 @@ select.dlg__input {
   display: flex;
   flex-direction: column;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(var(--ink), 0.12);
   background: rgba(20, 24, 36, 0.92);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   overflow: hidden;
@@ -6477,7 +6757,7 @@ select.dlg__input {
 }
 
 .mindmap__zoom button + button {
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  border-top: 1px solid rgba(var(--ink), 0.09);
 }
 
 .mindmap__zoom button:hover {
@@ -6487,7 +6767,7 @@ select.dlg__input {
 
 /* Quiz blank slate, centered. */
 .quiz__blank {
-  border: 1px dashed var(--line, rgba(255, 255, 255, 0.2));
+  border: 1px dashed var(--line, rgba(var(--ink), 0.2));
   border-radius: 18px;
   padding: 36px 28px;
   text-align: center;
@@ -6537,4 +6817,205 @@ select.dlg__input {
   .cards__num {
     display: none;
   }
+}
+
+/* ------------------------------------------------------------------ light */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --ink: 0, 0, 0;
+  --sidebar-bg: #f4f4f6;
+  --main-bg: #ffffff;
+  --line: rgba(0, 0, 0, 0.1);
+  --hover: rgba(0, 0, 0, 0.045);
+  --hover-strong: rgba(0, 0, 0, 0.09);
+  --accent: #2f6fd0;
+  --danger: #cf222e;
+  --ev-c-text-1: #1b1b1f;
+  --ev-c-text-2: rgba(20, 20, 28, 0.66);
+  --ev-c-text-3: rgba(20, 20, 28, 0.44);
+  --color-background: #ffffff;
+  --color-background-soft: #f2f2f4;
+  --color-background-mute: #e9e9ec;
+}
+
+/* Dark floating surfaces become white cards. */
+:root[data-theme='light'] .note-menu,
+:root[data-theme='light'] .findbar,
+:root[data-theme='light'] .slash-menu,
+:root[data-theme='light'] .spotlight,
+:root[data-theme='light'] .switcher,
+:root[data-theme='light'] .navfloat,
+:root[data-theme='light'] .dlg,
+:root[data-theme='light'] .cal-cals,
+:root[data-theme='light'] .lockscreen__card,
+:root[data-theme='light'] .agent-bubble,
+:root[data-theme='light'] .agent__chat {
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+/* Dark inline chips become light chips (text flips via --ev-c-text-2). */
+:root[data-theme='light'] .rimg__handle,
+:root[data-theme='light'] .md-img__float,
+:root[data-theme='light'] .md-img__tool,
+:root[data-theme='light'] .floater__lock {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+/* Tab bar gradient end. */
+:root[data-theme='light'] .tabbar {
+  background:
+    radial-gradient(120% 140% at 50% -40%, rgba(47, 111, 208, 0.08), transparent 60%), #eef0f3;
+}
+
+/* White text on saturated accents becomes explicit (was near-black). */
+:root[data-theme='light'] .btn--primary,
+:root[data-theme='light'] .chat__send,
+:root[data-theme='light'] .sidebar__today-count,
+:root[data-theme='light'] .cal-chip,
+:root[data-theme='light'] .cal-cell.is-today .cal-cell__date,
+:root[data-theme='light'] .cal-week__day.is-today .cal-week__date,
+:root[data-theme='light'] .cal-block,
+:root[data-theme='light'] .dlg__weekday.is-active {
+  color: #fff;
+}
+
+/* Code surfaces go light with the GitHub light token palette. */
+:root[data-theme='light'] .markdown pre,
+:root[data-theme='light'] .codeblock,
+:root[data-theme='light'] .codeblock__console {
+  background: #f4f4f6;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+:root[data-theme='light'] .codeblock .hljs {
+  background: transparent;
+  color: #1f2328;
+}
+
+:root[data-theme='light'] .codeblock .hljs-keyword,
+:root[data-theme='light'] .codeblock .hljs-selector-tag,
+:root[data-theme='light'] .codeblock .hljs-doctag,
+:root[data-theme='light'] .codeblock .hljs-template-tag {
+  color: #cf222e;
+}
+
+:root[data-theme='light'] .codeblock .hljs-string,
+:root[data-theme='light'] .codeblock .hljs-regexp,
+:root[data-theme='light'] .codeblock .hljs-meta .hljs-string {
+  color: #0a3069;
+}
+
+:root[data-theme='light'] .codeblock .hljs-number,
+:root[data-theme='light'] .codeblock .hljs-literal {
+  color: #0550ae;
+}
+
+:root[data-theme='light'] .codeblock .hljs-title,
+:root[data-theme='light'] .codeblock .hljs-title.function_,
+:root[data-theme='light'] .codeblock .hljs-section {
+  color: #8250df;
+}
+
+:root[data-theme='light'] .codeblock .hljs-variable,
+:root[data-theme='light'] .codeblock .hljs-template-variable,
+:root[data-theme='light'] .codeblock .hljs-attr,
+:root[data-theme='light'] .codeblock .hljs-attribute {
+  color: #116329;
+}
+
+:root[data-theme='light'] .codeblock .hljs-built_in,
+:root[data-theme='light'] .codeblock .hljs-symbol,
+:root[data-theme='light'] .codeblock .hljs-bullet,
+:root[data-theme='light'] .codeblock .hljs-link,
+:root[data-theme='light'] .codeblock .hljs-type {
+  color: #8250df;
+}
+
+:root[data-theme='light'] .codeblock .hljs-comment,
+:root[data-theme='light'] .codeblock .hljs-quote {
+  color: #59636e;
+}
+
+/* Dark inputs go light. */
+:root[data-theme='light'] .tabgroup__input,
+:root[data-theme='light'] .codeblock__console {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:root[data-theme='light'] .routine__rename {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* Mindmap dark chrome goes light. */
+:root[data-theme='light'] .mindmap__node-el {
+  color: #1b1b1f;
+}
+
+:root[data-theme='light'] .mindmap__chev,
+:root[data-theme='light'] .mindmap__mini button,
+:root[data-theme='light'] .mindmap__zoom button {
+  color: #3a4152;
+}
+
+:root[data-theme='light'] .mindmap__chev:hover,
+:root[data-theme='light'] .mindmap__mini button:hover,
+:root[data-theme='light'] .mindmap__zoom button:hover {
+  background: rgba(47, 111, 208, 0.12);
+  color: #1b1b1f;
+}
+
+/* Agent chat bubbles inverts with the theme via text vars; the agent bubble
+   keeps its border visible on white. */
+:root[data-theme='light'] .msg--agent .msg__bubble {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* Loading shimmer keeps a visible flash on light grounds. */
+:root[data-theme='light'] .agent__thinking {
+  background: linear-gradient(
+    100deg,
+    var(--ev-c-text-3) 0%,
+    var(--ev-c-text-3) 18%,
+    #ffffff 25%,
+    var(--ev-c-text-3) 32%,
+    var(--ev-c-text-3) 68%,
+    #ffffff 75%,
+    var(--ev-c-text-3) 82%,
+    var(--ev-c-text-3) 100%
+  );
+}
+
+/* Today section: stronger card, darker rows/times/labels on light grounds. */
+:root[data-theme='light'] .sidebar__events {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme='light'] .sidebar__today-row {
+  color: var(--ev-c-text-1);
+}
+
+:root[data-theme='light'] .sidebar__today-time {
+  color: var(--ev-c-text-2);
+  font-weight: 600;
+}
+
+:root[data-theme='light'] .sidebar__today-group {
+  color: var(--ev-c-text-2);
+}
+
+:root[data-theme='light'] .sidebar__events .sidebar__empty {
+  color: var(--ev-c-text-2);
+}
+
+:root[data-theme='light'] .sidebar__today-check {
+  width: 14px;
+  height: 14px;
+}
+
+:root[data-theme='light'] .sidebar__today-count {
+  box-shadow: 0 1px 3px rgba(47, 111, 208, 0.5);
 }

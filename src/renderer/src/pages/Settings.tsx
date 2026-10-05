@@ -428,6 +428,8 @@ function Settings(): React.JSX.Element {
   const setBackgroundListening = useAppStore((state) => state.setBackgroundListening)
   const orbEnabled = useAppStore((state) => state.orbEnabled)
   const setOrbEnabled = useAppStore((state) => state.setOrbEnabled)
+  const theme = useAppStore((state) => state.theme)
+  const setTheme = useAppStore((state) => state.setTheme)
   const ttsEnabled = useAppStore((state) => state.ttsEnabled)
   const setTtsEnabled = useAppStore((state) => state.setTtsEnabled)
   const vaultPath = useAppStore((state) => state.vaultPath)
@@ -446,6 +448,30 @@ function Settings(): React.JSX.Element {
     <main className="settings">
       <div className="settings__inner">
         <h1 className="settings__title">Settings</h1>
+
+        <section className="settings__section">
+          <h2 className="settings__section-title">Appearance</h2>
+          <div className="kind-toggle settings__theme" role="group" aria-label="Appearance">
+            {(['dark', 'light', 'system'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={`kind-toggle__btn${theme === mode ? ' is-active' : ''}`}
+                aria-pressed={theme === mode}
+                onClick={() => setTheme(mode)}
+              >
+                {mode === 'dark' ? 'Dark' : mode === 'light' ? 'Light' : 'System'}
+              </button>
+            ))}
+          </div>
+          <p className="settings__note">
+            {theme === 'system'
+              ? 'Following your OS appearance.'
+              : theme === 'light'
+                ? 'Light theme.'
+                : 'Dark theme.'}
+          </p>
+        </section>
 
         <section className="settings__section">
           <h2 className="settings__section-title">Notes vault</h2>

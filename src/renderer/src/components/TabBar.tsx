@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { NAV_BY_KEY, NAV_LABELS } from '../nav'
+import { isInlineNav } from '../nav'
 import { TAB_GROUP_COLORS, useAppStore, type Tab } from '../store/appStore'
 import { FileTextIcon, ChevronLeftIcon, ChevronRightIcon, SidebarToggleIcon, XIcon } from './icons'
 
@@ -26,8 +26,11 @@ const IS_MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes(
 function TabBar(): React.JSX.Element {
   const tabs = useAppStore((state) => state.tabs)
   const activeTabId = useAppStore((state) => state.activeTabId)
+  const activeNav = useAppStore((state) => state.activeNav)
+  // Home/SeeMO take over the content area, so no tab reads active under
+  // them; floating windows leave the note underneath lit.
+  const noteVisible = activeNav === null || !isInlineNav(activeNav)
   const notes = useAppStore((state) => state.notes)
-  const coreState = useAppStore((state) => state.coreState)
   const tabHistory = useAppStore((state) => state.tabHistory)
   const historyIndex = useAppStore((state) => state.historyIndex)
   const tabGroups = useAppStore((state) => state.tabGroups)
@@ -163,12 +166,9 @@ function TabBar(): React.JSX.Element {
   }
 
   const renderTab = (tab: Tab): React.JSX.Element => {
-    const isActive = tab.id === activeTabId
-    const label =
-      tab.kind === 'note'
-        ? notes.find((n) => n.id === tab.noteId)?.title.trim() || 'Untitled'
-        : NAV_LABELS[tab.kind]
-    const Icon = tab.kind === 'note' ? FileTextIcon : NAV_BY_KEY[tab.kind].icon
+    // Sidebar pages never take tabs; floating windows leave the note lit.
+    const isActive = noteVisible && tab.id === activeTabId
+    const label = notes.find((n) => n.id === tab.noteId)?.title.trim() || 'Untitled'
     const hint = dropHint?.id === tab.id ? dropHint : null
 
     return (
@@ -200,7 +200,7 @@ function TabBar(): React.JSX.Element {
           event.preventDefault()
           setMenu({ kind: 'tab', tabId: tab.id, ...clampMenu(event.clientX, event.clientY) })
         }}
-        className={`tab${isActive ? ' is-active' : ''}${tab.kind === 'note' ? ' tab--note' : ''}${draggingId === tab.id ? ' tab--dragging' : ''}${hint ? (hint.before ? ' tab--drop-before' : ' tab--drop-after') : ''}`}
+        className={`tab tab--note${isActive ? ' is-active' : ''}${draggingId === tab.id ? ' tab--dragging' : ''}${hint ? (hint.before ? ' tab--drop-before' : ' tab--drop-after') : ''}`}
       >
         <button
           type="button"
@@ -210,11 +210,8 @@ function TabBar(): React.JSX.Element {
           title={label}
           onClick={() => setActiveTab(tab.id)}
         >
-          <Icon size={14} />
+          <FileTextIcon size={14} />
           <span className="tab__label">{label}</span>
-          {tab.kind === 'agent' && (
-            <span className={`tab__dot tab__dot--${coreState}`} title={`Core: ${coreState}`} />
-          )}
         </button>
         <button
           type="button"
@@ -238,7 +235,7 @@ function TabBar(): React.JSX.Element {
     <div
       className={`tabbar${sidebarCollapsed && IS_MAC ? ' tabbar--clear-lights' : ''}`}
       role="tablist"
-      aria-label="Open tabs"
+      aria-label="Open note tabs"
     >
       {sidebarCollapsed && (
         <button
@@ -278,12 +275,18 @@ function TabBar(): React.JSX.Element {
         onDragOver={(event) => event.preventDefault()}
         onDrop={onListDrop}
       >
+        {tabs.length === 0 && tabGroups.length === 0 && (
+          <span className="tabbar__empty" title="Open a note from the sidebar">
+            No note tabs
+          </span>
+        )}
         {ungrouped.map((tab) => renderTab(tab))}
         {tabGroups.map((group) => {
           const groupTabs = tabs.filter((t) => groupOf(t.id) === group.id)
-          // The active tab's group never renders collapsed.
+          // The visible tab's group never renders collapsed.
           const collapsed =
-            collapsedTabGroups.includes(group.id) && !groupTabs.some((t) => t.id === activeTabId)
+            collapsedTabGroups.includes(group.id) &&
+            !(noteVisible && groupTabs.some((t) => t.id === activeTabId))
           const renaming = renamingGroupId === group.id
           const groupHint = groupDropHint?.id === group.id ? groupDropHint : null
           const displayName = group.name.trim()

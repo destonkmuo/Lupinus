@@ -425,6 +425,28 @@ export function CardsIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+/** Eye: show events. */
+export function EyeIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </IconBase>
+  )
+}
+
+/** Eye-off: hide events. */
+export function EyeOffIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M17.94 17.94A10.5 10.5 0 0 1 12 19c-6.5 0-10-7-10-7a17.6 17.6 0 0 1 4.06-4.94" />
+      <path d="M9.9 4.24A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.7 17.7 0 0 1-2.16 3.19" />
+      <path d="M14.12 14.12A3 3 0 1 1 9.88 9.88" />
+      <path d="m2 2 20 20" />
+    </IconBase>
+  )
+}
+
 /** Learn set: graduation cap. */
 export function LearnIcon(props: IconProps): React.JSX.Element {
   return (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { NAV_BY_KEY, NAV_LABELS } from '../nav'
+import { isInlineNav } from '../nav'
 import { useAppStore } from '../store/appStore'
 import { FileTextIcon } from './icons'
 
@@ -13,7 +13,10 @@ function snippetFor(content: string): string {
 }
 
 /**
- * Ctrl+Tab app-switcher for open tabs, most-recent-first.
+ * Ctrl+Tab switcher for open note tabs, most-recent-first.
+ *
+ * Sidebar pages (Home, Tasks, Calendar, …) are views, not tabs, so they
+ * never appear here — this only cycles notes.
  *
  * Rows follow tab recency (the tab you just left sits on top), so a quick
  * Ctrl+Tab tap toggles between your last two tabs. Holding Control and
@@ -29,6 +32,7 @@ function TabSwitcher(): React.JSX.Element | null {
   const tabs = useAppStore((state) => state.tabs)
   const tabRecency = useAppStore((state) => state.tabRecency)
   const activeTabId = useAppStore((state) => state.activeTabId)
+  const activeNav = useAppStore((state) => state.activeNav)
   const notes = useAppStore((state) => state.notes)
 
   // Most-recent-first tab order; anything the recency list never saw (e.g. a
@@ -147,21 +151,18 @@ function TabSwitcher(): React.JSX.Element | null {
         if (event.target === event.currentTarget) cancel()
       }}
     >
-      <div className="switcher" role="dialog" aria-modal="true" aria-label="Switch tabs">
+      <div className="switcher" role="dialog" aria-modal="true" aria-label="Switch note tabs">
         <div className="switcher__head">
-          <span className="switcher__title">Switch tabs · recent first</span>
+          <span className="switcher__title">Switch notes · recent first</span>
           <kbd className="sidebar__kbd">ctrl + tab</kbd>
         </div>
         <ul className="switcher__list">
           {ordered.map((tab, index) => {
-            const isNote = tab.kind === 'note'
-            const note = isNote ? notes.find((n) => n.id === tab.noteId) : null
-            const label = isNote ? note?.title.trim() || 'Untitled' : NAV_LABELS[tab.kind]
-            const preview = isNote
-              ? snippetFor(note?.content ?? '')
-              : `Open ${NAV_LABELS[tab.kind]}`
-            const Icon = isNote ? FileTextIcon : NAV_BY_KEY[tab.kind].icon
-            const isActive = tab.id === activeTabId
+            const note = notes.find((n) => n.id === tab.noteId)
+            const label = note?.title.trim() || 'Untitled'
+            const preview = snippetFor(note?.content ?? '')
+            const isActive =
+              (activeNav === null || !isInlineNav(activeNav)) && tab.id === activeTabId
             return (
               <li key={tab.id}>
                 <button
@@ -170,7 +171,7 @@ function TabSwitcher(): React.JSX.Element | null {
                   onMouseEnter={() => setSelected(index)}
                   onClick={() => commit(index)}
                 >
-                  <Icon size={16} />
+                  <FileTextIcon size={16} />
                   <span className="switcher__text">
                     <span className="switcher__label">
                       {label}
