@@ -4,6 +4,7 @@ import { resolveSoundUrl, startAlarmLoop } from './alarm'
 import { isAlarmDue, nowHHMM } from './time'
 import AgentBubble from './components/AgentBubble'
 import LockScreen, { type LockInfo } from './components/LockScreen'
+import Rail from './components/Rail'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import TabSwitcher from './components/TabSwitcher'
@@ -92,16 +93,17 @@ function NavFloat({ nav, onClose }: { nav: NavKey; onClose: () => void }): React
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   const title = NAV_LABELS[nav]
+  const wide = nav === 'calendar'
   return (
     <div
-      className="navfloat__backdrop"
+      className={`navfloat__backdrop${wide ? ' navfloat__backdrop--wide' : ''}`}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
     >
       <div
-        className={`navfloat${nav === 'calendar' ? ' navfloat--wide' : ''}`}
+        className={`navfloat${wide ? ' navfloat--wide' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -131,6 +133,8 @@ function NavFloat({ nav, onClose }: { nav: NavKey; onClose: () => void }): React
 function App(): React.JSX.Element {
   useTheme()
   const tabs = useAppStore((state) => state.tabs)
+  const goBackTab = useAppStore((state) => state.goBackTab)
+  const goForwardTab = useAppStore((state) => state.goForwardTab)
   const activeTabId = useAppStore((state) => state.activeTabId)
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
   // Sidebar pages (Home, Tasks, Calendar, …) float above the note tabs.
@@ -145,6 +149,8 @@ function App(): React.JSX.Element {
   const vaultReady = useAppStore((state) => state.vaultReady)
   const syncingRef = useRef(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const historySwipeRef = useRef<{ x: number; y: number } | null>(null)
+  const historyWheelRef = useRef({ accum: 0, lockUntil: 0 })
   const leftPaneRef = useRef<HTMLDivElement>(null)
   const splitDragRef = useRef({ x: 0, left: 0 })
   const [resizingSplit, setResizingSplit] = useState(false)
@@ -167,6 +173,15 @@ function App(): React.JSX.Element {
       })
       .catch(() => setUnlocked(true))
       .finally(() => setLockChecked(true))
+  }, [])
+
+  // Sign out: the rail's account menu bumps the store counter, and we drop
+  // back to the lock screen. Subscribing (rather than watching the value in a
+  // selector) keeps the setState out of a render-sync effect.
+  useEffect(() => {
+    return useAppStore.subscribe((state, prev) => {
+      if (state.lockRequested !== prev.lockRequested) setUnlocked(false)
+    })
   }, [])
 
   // Load the on-disk vault once: imports existing .md files and writes out
@@ -416,6 +431,29 @@ function App(): React.JSX.Element {
     content = <Note key={activeTab.id} noteId={activeTab.noteId} />
   }
 
+  // In the main window a horizontal swipe walks page (tab) history, matching
+  // the browser gesture: swipe right → back, swipe left → forward. Space
+  // switching is reserved for the sidebar. Vertical scrolling is ignored, and
+  // horizontally scrollable regions keep their own behaviour.
+  const onHistoryWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) * 1.2) return
+    const target = event.target as HTMLElement
+    if (target.closest('input, textarea, [contenteditable="true"], .tabbar__list, pre')) {
+      return
+    }
+    const now = performance.now()
+    const wheel = historyWheelRef.current
+    if (now < wheel.lockUntil) return
+    if (Math.sign(wheel.accum) !== Math.sign(event.deltaX)) wheel.accum = 0
+    wheel.accum += event.deltaX
+    if (Math.abs(wheel.accum) < 80) return
+    const forward = wheel.accum > 0
+    wheel.accum = 0
+    wheel.lockUntil = now + 500
+    if (forward) goForwardTab()
+    else goBackTab()
+  }
+
   // Blank stage while checking; lock screen while gated. Nothing behind
   // it renders, and the vault stays unread until unlock.
   if (!lockChecked) return <div className="app" aria-hidden="true" />
@@ -434,11 +472,36 @@ function App(): React.JSX.Element {
 
   return (
     <div className="app">
+      {/* Icon-only rail that slides in from the very left edge on hover. */}
+      <Rail />
       {/* Always mounted: collapsing animates width to zero via CSS. */}
       <Sidebar />
       <div className="app__main">
-        <TabBar />
-        <div ref={contentRef} className={`app__content${splitTab ? ' app__content--split' : ''}`}>
+        {/* Home and SeeMO own the full window: no tab bar while focused. */}
+        {!isInlineNav(activeNav) && <TabBar />}
+        <div
+          ref={contentRef}
+          className={`app__content${splitTab ? ' app__content--split' : ''}`}
+          onWheel={onHistoryWheel}
+          onTouchStart={(event) => {
+            if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]'))
+              return
+            const touch = event.touches[0]
+            historySwipeRef.current = { x: touch.clientX, y: touch.clientY }
+          }}
+          onTouchEnd={(event) => {
+            const start = historySwipeRef.current
+            historySwipeRef.current = null
+            if (!start) return
+            const touch = event.changedTouches[0]
+            const dx = touch.clientX - start.x
+            const dy = touch.clientY - start.y
+            if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.3) return
+            // Swipe right (dx > 0) = back; swipe left (dx < 0) = forward.
+            if (dx > 0) goBackTab()
+            else goForwardTab()
+          }}
+        >
           {content}
         </div>
       </div>

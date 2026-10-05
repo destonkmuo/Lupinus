@@ -38,9 +38,10 @@ export const NAV_LABELS = Object.fromEntries(
 ) as Record<NavKey, string>
 
 /**
- * Pages with a dedicated full-size view (still tab-free). Every other page
- * floats above the notes in a rounded window instead.
+ * Every nav page now renders as a dedicated full-size, tab-free view (like
+ * Home and SeeMO) rather than floating above the notes. Kept as a helper so
+ * the layout code has one place to reason about inline vs. tabbed notes.
  */
-export function isInlineNav(key: NavKey | null): key is 'home' | 'agent' {
-  return key === 'home' || key === 'agent'
+export function isInlineNav(key: NavKey | null): key is NavKey {
+  return key !== null
 }

@@ -68,6 +68,19 @@ function appCommands(): Command[] {
       run: () => void api().createNote()
     },
     {
+      id: 'new-space',
+      title: 'New space',
+      hint: 'Create a note space',
+      keywords: 'new space workspace emoji',
+      run: () => {
+        const name = window.prompt('Name this space')
+        if (name === null || !name.trim()) return
+        const emoji = window.prompt('Choose an emoji for this space', '📁')
+        if (emoji === null) return
+        api().createSpace(name, emoji)
+      }
+    },
+    {
       id: 'new-section',
       title: 'New section',
       hint: 'Add a sidebar divider',

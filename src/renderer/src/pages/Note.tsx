@@ -116,7 +116,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     const parent = state.notes.find((n) => n.id === noteId)
     if (!parent || parent.deletedAt) return null
     if (kind === 'page') {
-      const childId = state.createNote('Untitled page')
+      const childId = state.createNote('Untitled page', null, parent.spaceId)
       const child = useAppStore.getState().notes.find((n) => n.id === childId)
       const title = child?.title.trim() || 'Untitled page'
       state.updateNote(noteId, { content: addHiddenPage(parent.content, title) })
@@ -135,7 +135,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         : kind === 'quiz'
           ? blankQuizBody()
           : blankFlashcardsBody()
-    const childId = state.createNote(title)
+    const childId = state.createNote(title, null, parent.spaceId)
     state.updateNote(childId, { content: childBody })
     const child = useAppStore.getState().notes.find((n) => n.id === childId)
     const finalTitle = child?.title.trim() || title

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { NAV_ITEMS, isInlineNav } from '../nav'
+import { isInlineNav } from '../nav'
 import { buildNoteGraph, orderedNotes } from '../notes'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import { addHiddenPage, splitHidden } from '../subpages'
@@ -19,16 +19,12 @@ import {
   ChevronDownIcon,
   ExclamationIcon,
   FileTextIcon,
-  GraphIcon,
-  MicIcon,
-  MicMutedIcon,
   MindmapIcon,
   MoreIcon,
   PlusIcon,
   QuizIcon,
   RestoreIcon,
   SearchIcon,
-  SettingsIcon,
   StarIcon,
   TrashIcon,
   XIcon
@@ -40,6 +36,28 @@ function formatEventTime(item: CalendarItem): string {
   if (!time) return 'All day'
   return formatClock(time)
 }
+
+/** Quick-pick emoji palette when creating or editing a space. */
+const SPACE_EMOJIS = [
+  '📝',
+  '🏠',
+  '💼',
+  '🎯',
+  '📚',
+  '🧠',
+  '🎨',
+  '🧪',
+  '🌱',
+  '💡',
+  '⭐',
+  '🔖',
+  '🗂️',
+  '🧭',
+  '🏋️',
+  '🍳',
+  '🎵',
+  '✈️'
+] as const
 
 /** "14:30" -> "2:30 PM". */
 function formatClock(hhmm: string): string {
@@ -222,6 +240,13 @@ function Sidebar(): React.JSX.Element {
   // which floating window (if any) is open.
   const activeNav = useAppStore((state) => state.activeNav)
   const notes = useAppStore((state) => state.notes)
+  const spaces = useAppStore((state) => state.spaces)
+  const activeSpaceId = useAppStore((state) => state.activeSpaceId)
+  const setActiveSpace = useAppStore((state) => state.setActiveSpace)
+  const moveSpace = useAppStore((state) => state.moveSpace)
+  const createSpace = useAppStore((state) => state.createSpace)
+  const updateSpace = useAppStore((state) => state.updateSpace)
+  const deleteSpace = useAppStore((state) => state.deleteSpace)
   const noteOrder = useAppStore((state) => state.noteOrder)
   const query = useAppStore((state) => state.query)
   const coreState = useAppStore((state) => state.coreState)
@@ -229,9 +254,6 @@ function Sidebar(): React.JSX.Element {
   const openNoteNewTab = useAppStore((state) => state.openNoteNewTab)
   const updateNote = useAppStore((state) => state.updateNote)
   const toggleFavorite = useAppStore((state) => state.toggleFavorite)
-  const restoreNote = useAppStore((state) => state.restoreNote)
-  const destroyNote = useAppStore((state) => state.destroyNote)
-  const emptyTrash = useAppStore((state) => state.emptyTrash)
   const favorites = useAppStore((state) => state.favorites)
   const setQuery = useAppStore((state) => state.setQuery)
   const createNote = useAppStore((state) => state.createNote)
@@ -244,11 +266,12 @@ function Sidebar(): React.JSX.Element {
   const deleteSection = useAppStore((state) => state.deleteSection)
   const moveSection = useAppStore((state) => state.moveSection)
   const setNoteSection = useAppStore((state) => state.setNoteSection)
+  const restoreNote = useAppStore((state) => state.restoreNote)
+  const destroyNote = useAppStore((state) => state.destroyNote)
+  const emptyTrash = useAppStore((state) => state.emptyTrash)
   const sidebarWidth = useAppStore((state) => state.sidebarWidth)
   const setSidebarWidth = useAppStore((state) => state.setSidebarWidth)
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed)
-  const backgroundListening = useAppStore((state) => state.backgroundListening)
-  const setBackgroundListening = useAppStore((state) => state.setBackgroundListening)
 
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null)
@@ -264,10 +287,42 @@ function Sidebar(): React.JSX.Element {
   const [dropNoteId, setDropNoteId] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ noteId: string; x: number; y: number } | null>(null)
   const [spaceMenu, setSpaceMenu] = useState<{ x: number; y: number } | null>(null)
+  const [spaceItemMenu, setSpaceItemMenu] = useState<{
+    spaceId: string
+    x: number
+    y: number
+  } | null>(null)
+  // null = creating a new space; an id = editing that space.
+  const [spaceEditor, setSpaceEditor] = useState<{ spaceId: string | null } | null>(null)
+  const [spaceName, setSpaceName] = useState('')
+  const [spaceEmoji, setSpaceEmoji] = useState('📁')
+  const [spaceDraggingId, setSpaceDraggingId] = useState<string | null>(null)
+  const [spaceDropHint, setSpaceDropHint] = useState<{ id: string; before: boolean } | null>(null)
+  const [trashOpen, setTrashOpen] = useState(false)
 
-  const clampMenu = (x: number, y: number): { x: number; y: number } => ({
+  const openSpaceEditor = (spaceId: string | null): void => {
+    setSpaceItemMenu(null)
+    setSpaceMenu(null)
+    const space = spaceId ? spaces.find((s) => s.id === spaceId) : null
+    setSpaceName(space?.name ?? '')
+    setSpaceEmoji(space?.emoji ?? '📁')
+    setSpaceEditor({ spaceId })
+  }
+
+  const saveSpace = (): void => {
+    if (!spaceEditor) return
+    const name = spaceName.trim() || 'New space'
+    const emoji = spaceEmoji.trim() || '📁'
+    if (spaceEditor.spaceId) updateSpace(spaceEditor.spaceId, { name, emoji })
+    else createSpace(name, emoji)
+    setSpaceEditor(null)
+  }
+
+  // `height` is the expected menu height so the clamp doesn't shove a short
+  // menu (e.g. the space actions) far up from the cursor near the bottom.
+  const clampMenu = (x: number, y: number, height = 300): { x: number; y: number } => ({
     x: Math.max(8, Math.min(x, window.innerWidth - 190)),
-    y: Math.max(8, Math.min(y, window.innerHeight - 300))
+    y: Math.max(8, Math.min(y, window.innerHeight - height))
   })
 
   const openMenuAt = (noteId: string, x: number, y: number): void => {
@@ -276,12 +331,23 @@ function Sidebar(): React.JSX.Element {
   }
   const [renamingNoteId, setRenamingNoteId] = useState<string | null>(null)
   const [renameNoteDraft, setRenameNoteDraft] = useState('')
-  const [trashOpen, setTrashOpen] = useState(false)
   const [resizing, setResizing] = useState(false)
   const dragIdRef = useRef<string | null>(null)
   const sectionDragRef = useRef<string | null>(null)
   const asideRef = useRef<HTMLElement>(null)
+  const spaceCarouselRef = useRef<HTMLDivElement>(null)
+  const spaceDragRef = useRef<string | null>(null)
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const spaceWheelRef = useRef({ accum: 0, lockUntil: 0 })
   const resizeStartRef = useRef({ x: 0, width: 0 })
+
+  useEffect(() => {
+    if (spaces.length <= 3) return
+    const activeButton = [
+      ...(spaceCarouselRef.current?.querySelectorAll<HTMLElement>('[data-space-id]') ?? [])
+    ].find((button) => button.dataset.spaceId === activeSpaceId)
+    activeButton?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+  }, [activeSpaceId, spaces.length])
 
   // The note row stays lit while its tab is visible: always in note view,
   // and behind floating windows — but not under Home/SeeMO's full-size views.
@@ -300,7 +366,11 @@ function Sidebar(): React.JSX.Element {
   // Top level shows roots only: a note with a parent lives nested under it,
   // never beside it. While searching, fall back to a flat match list so
   // results are never hidden inside collapsed parents.
-  const liveNotes = useMemo(() => notes.filter((note) => !note.deletedAt), [notes])
+  const liveNotes = useMemo(
+    () =>
+      notes.filter((note) => !note.deletedAt && (note.spaceId ?? spaces[0]?.id) === activeSpaceId),
+    [notes, spaces, activeSpaceId]
+  )
   const graph = useMemo(
     () => buildNoteGraph(orderedNotes(liveNotes, noteOrder)),
     [liveNotes, noteOrder]
@@ -309,6 +379,9 @@ function Sidebar(): React.JSX.Element {
     matchesQuery
   )
   const favoriteRoots = visibleNotes.filter((note) => favorites.includes(note.id))
+
+  // Trash lives in the spacebar now: whole-vault list, newest first.
+  const [nowMs] = useState(() => Date.now())
   const trashed = useMemo(
     () =>
       notes
@@ -316,6 +389,14 @@ function Sidebar(): React.JSX.Element {
         .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0)),
     [notes]
   )
+  const daysLeft = (deletedAt: number, now: number): string => {
+    const days = Math.max(
+      0,
+      Math.ceil((deletedAt + TRASH_RETENTION_MS - now) / (24 * 60 * 60 * 1000))
+    )
+    return days <= 0 ? 'today' : `${days}d`
+  }
+  const noteLabel = (note: Note): string => note.title.trim() || 'Untitled'
 
   const toggleExpand = (id: string): void => {
     setExpandedIds((prev) => {
@@ -342,11 +423,13 @@ function Sidebar(): React.JSX.Element {
     setSectionDropHint(null)
   }
 
-  // Valid section for a note, or null for ungrouped (unknown ids fall out).
-  const sectionIds = new Set(noteSections.map((s) => s.id))
+  // Valid section for a note within the active space, or null when ungrouped
+  // (unknown or cross-space ids fall out, so a note never goes missing).
   const sectionOf = (noteId: string): string | null => {
     const id = noteSection[noteId]
-    return id !== undefined && sectionIds.has(id) ? id : null
+    if (id === undefined) return null
+    const section = noteSections.find((s) => s.id === id)
+    return section && section.spaceId === activeSpaceId ? id : null
   }
 
   const positionAbove = (event: React.DragEvent<HTMLElement>): boolean => {
@@ -537,13 +620,6 @@ function Sidebar(): React.JSX.Element {
     state.openNote(childId)
   }
 
-  const destroyNoteForever = (note: Note): void => {
-    const label = note.title.trim() || 'Untitled'
-    if (window.confirm(`Destroy "${label}" forever? This cannot be undone.`)) {
-      destroyNote(note.id)
-    }
-  }
-
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Ctrl+K focuses sidebar search, per the ^K chip. Either logical
@@ -574,18 +650,21 @@ function Sidebar(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Esc closes the row/space menus.
+  // Esc closes the row/space menus, the space editor, and the trash popover.
   useEffect(() => {
-    if (!menu && !spaceMenu) return
+    if (!menu && !spaceMenu && !spaceItemMenu && !spaceEditor && !trashOpen) return
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         setMenu(null)
         setSpaceMenu(null)
+        setSpaceItemMenu(null)
+        setSpaceEditor(null)
+        setTrashOpen(false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [menu, spaceMenu])
+  }, [menu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen])
 
   const expandAll = (): void => {
     setExpandedIds(new Set(visibleNotes.map((n) => n.id)))
@@ -594,7 +673,9 @@ function Sidebar(): React.JSX.Element {
 
   const collapseAll = (): void => {
     setExpandedIds(new Set())
-    setCollapsedIds(new Set(noteSections.map((s) => s.id)))
+    setCollapsedIds(
+      new Set(noteSections.filter((s) => s.spaceId === activeSpaceId).map((s) => s.id))
+    )
   }
 
   // Split view for a note: reuse a background tab for it, or open a fresh
@@ -623,10 +704,6 @@ function Sidebar(): React.JSX.Element {
     if (useAppStore.getState().activeTabId !== id) state.setSplitTab(id)
   }
 
-  // "Today" math is render-stable for the life of this mount; trash ages in
-  // whole days, so a per-mount timestamp never visibly drifts.
-  const [nowMs] = useState(() => Date.now())
-
   // New pages arrive with a rename signal: open the inline field on the row.
   // Deferred a frame so the rename state lands as an event-style update.
   const renamingSignal = useAppStore((state) => state.renamingNoteId)
@@ -643,14 +720,6 @@ function Sidebar(): React.JSX.Element {
     })
     return () => cancelAnimationFrame(frame)
   }, [renamingSignal])
-
-  const trashDaysLeft = (deletedAt: number, now: number): string => {
-    const days = Math.max(
-      0,
-      Math.ceil((deletedAt + TRASH_RETENTION_MS - now) / (24 * 60 * 60 * 1000))
-    )
-    return days <= 0 ? 'today' : `${days}d`
-  }
 
   // Sidebar edge drag: paint live via the DOM for 60fps, commit to the
   // store (and persistence) once on release.
@@ -934,7 +1003,46 @@ function Sidebar(): React.JSX.Element {
     )
   }
 
+  // Dividers are independent per space: only the active space's show.
+  const spaceSections = noteSections.filter((section) => section.spaceId === activeSpaceId)
   const ungrouped = visibleNotes.filter((note) => sectionOf(note.id) === null)
+  const activeSpaceIndex = spaces.findIndex((space) => space.id === activeSpaceId)
+
+  // Direction of the most recent switch, so the notes pane slides the right way.
+  const prevSpaceIndexRef = useRef(activeSpaceIndex)
+  const [spaceDir, setSpaceDir] = useState<'left' | 'right'>('right')
+  useEffect(() => {
+    const prev = prevSpaceIndexRef.current
+    if (prev === activeSpaceIndex) return
+    prevSpaceIndexRef.current = activeSpaceIndex
+    setSpaceDir(activeSpaceIndex > prev ? 'right' : 'left')
+  }, [activeSpaceIndex])
+
+  // Trackpad two-finger horizontal swipe also switches spaces.
+  const onSpaceWheel = (event: React.WheelEvent<HTMLElement>): void => {
+    if (spaces.length < 2) return
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) * 1.2) return
+    const target = event.target as HTMLElement
+    if (
+      target.closest(
+        'input, textarea, [contenteditable="true"], pre, .sidebar__space-icons, .tabbar__list'
+      )
+    ) {
+      return
+    }
+    const now = performance.now()
+    const wheel = spaceWheelRef.current
+    if (now < wheel.lockUntil) return
+    if (Math.sign(wheel.accum) !== Math.sign(event.deltaX)) wheel.accum = 0
+    wheel.accum += event.deltaX
+    if (Math.abs(wheel.accum) < 80) return
+    const dir = wheel.accum > 0 ? 1 : -1
+    wheel.accum = 0
+    wheel.lockUntil = now + 500
+    if (activeSpaceIndex < 0) return
+    const next = spaces[(activeSpaceIndex + dir + spaces.length) % spaces.length]
+    if (next) setActiveSpace(next.id)
+  }
 
   return (
     <aside
@@ -943,8 +1051,39 @@ function Sidebar(): React.JSX.Element {
       aria-label="Navigation and notes"
       aria-hidden={sidebarCollapsed || undefined}
       style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
+      onWheel={onSpaceWheel}
+      onTouchStart={(event) => {
+        swipeStartRef.current = null
+        const target = event.target as HTMLElement
+        if (
+          target.closest('input, textarea, [contenteditable="true"]') ||
+          (spaces.length > 3 && target.closest('.sidebar__space-icons'))
+        )
+          return
+        const touch = event.touches[0]
+        swipeStartRef.current = { x: touch.clientX, y: touch.clientY }
+      }}
+      onTouchEnd={(event) => {
+        const start = swipeStartRef.current
+        swipeStartRef.current = null
+        if (!start || spaces.length < 2) return
+        const touch = event.changedTouches[0]
+        const dx = touch.clientX - start.x
+        const dy = touch.clientY - start.y
+        if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.3) return
+        const index = spaces.findIndex((space) => space.id === activeSpaceId)
+        if (index < 0) return
+        const next = spaces[(index + (dx < 0 ? 1 : spaces.length - 1)) % spaces.length]
+        if (next) setActiveSpace(next.id)
+      }}
     >
       <div className="sidebar__top">
+        <span
+          className={`sidebar__state sidebar__state--${coreState} sidebar__status`}
+          title={`Core: ${coreState}`}
+          aria-label={`Core status: ${coreState}`}
+          role="img"
+        />
         <label className="sidebar__search">
           <SearchIcon size={15} />
           <input
@@ -965,7 +1104,7 @@ function Sidebar(): React.JSX.Element {
           const target = event.target as HTMLElement
           if (
             target.closest(
-              '[data-note-row], .sidebar__divider, .sidebar__trash-row, .sidebar__trash-head, .sidebar__events, nav, button, input, textarea, .note-menu'
+              '[data-note-row], .sidebar__events, nav, button, input, textarea, .note-menu'
             )
           ) {
             return
@@ -977,39 +1116,9 @@ function Sidebar(): React.JSX.Element {
       >
         <TodaySection />
 
-        <nav className="sidebar__nav" aria-label="Primary">
-          {NAV_ITEMS.filter((item) => item.key !== 'settings' && item.key !== 'graph').map(
-            (item) => {
-              const Icon = item.icon
-              const isActive = activeNav === item.key
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={`sidebar__row${isActive ? ' is-active' : ''}`}
-                  onClick={() => toggleNav(item.key)}
-                >
-                  <Icon size={16} />
-                  <span className="sidebar__label">{item.label}</span>
-                </button>
-              )
-            }
-          )}
-        </nav>
-
         <div className="sidebar__section">
           <div className="sidebar__section-head">
             <span className="sidebar__section-title">Notes</span>
-            <button
-              type="button"
-              className={`sidebar__icon-btn${activeNav === 'graph' ? ' is-active' : ''}`}
-              title="Open graph"
-              aria-label="Open graph"
-              aria-pressed={activeNav === 'graph'}
-              onClick={() => toggleNav('graph')}
-            >
-              <GraphIcon size={22} />
-            </button>
             <button
               type="button"
               className="sidebar__icon-btn"
@@ -1021,62 +1130,70 @@ function Sidebar(): React.JSX.Element {
             </button>
           </div>
 
-          {needle ? (
-            visibleNotes.length === 0 ? (
-              <p className="sidebar__empty">No notes match your search.</p>
-            ) : (
-              <ul
-                className="sidebar__notes"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={onListDrop}
-              >
-                {visibleNotes.map((note) => renderTree(note, 0, []))}
-              </ul>
-            )
-          ) : (
-            <>
-              {favoriteRoots.length > 0 && (
-                <div className="sidebar__section-block" aria-label="Favorites">
-                  <div className="sidebar__section-head">
-                    <span className="sidebar__section-title sidebar__fav-title">
-                      <StarIcon size={12} />
-                      Favorites
-                    </span>
-                  </div>
-                  <ul className="sidebar__notes">
-                    {favoriteRoots.map((note) => renderTree(note, 0, []))}
-                  </ul>
-                </div>
-              )}
-              {noteSections.map((section) => renderSection(section))}
-              {ungrouped.length === 0 && noteSections.length === 0 ? (
-                <p className="sidebar__empty">No notes yet — create one.</p>
+          <div key={activeSpaceId} className={`sidebar__space-pane is-${spaceDir}`}>
+            {needle ? (
+              visibleNotes.length === 0 ? (
+                <p className="sidebar__empty">No notes match your search.</p>
               ) : (
                 <ul
                   className="sidebar__notes"
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={onListDrop}
                 >
-                  {ungrouped.map((note) => renderTree(note, 0, []))}
+                  {visibleNotes.map((note) => renderTree(note, 0, []))}
                 </ul>
-              )}
-            </>
-          )}
+              )
+            ) : (
+              <>
+                {favoriteRoots.length > 0 && (
+                  <div className="sidebar__section-block" aria-label="Favorites">
+                    <div className="sidebar__section-head">
+                      <span className="sidebar__section-title sidebar__fav-title">
+                        <StarIcon size={12} />
+                        Favorites
+                      </span>
+                    </div>
+                    <ul className="sidebar__notes">
+                      {favoriteRoots.map((note) => renderTree(note, 0, []))}
+                    </ul>
+                  </div>
+                )}
+                {spaceSections.map((section) => renderSection(section))}
+                {ungrouped.length === 0 && spaceSections.length === 0 ? (
+                  <p className="sidebar__empty">No notes yet — create one.</p>
+                ) : (
+                  <ul
+                    className="sidebar__notes"
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={onListDrop}
+                  >
+                    {ungrouped.map((note) => renderTree(note, 0, []))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      {(menu || spaceMenu) && (
+      {(menu || spaceMenu || spaceItemMenu || spaceEditor || trashOpen) && (
         <div
           className="note-menu__backdrop"
           aria-hidden="true"
           onClick={() => {
             setMenu(null)
             setSpaceMenu(null)
+            setSpaceItemMenu(null)
+            setSpaceEditor(null)
+            setTrashOpen(false)
           }}
           onContextMenu={(event) => {
             event.preventDefault()
             setMenu(null)
             setSpaceMenu(null)
+            setSpaceItemMenu(null)
+            setSpaceEditor(null)
+            setTrashOpen(false)
           }}
         />
       )}
@@ -1084,7 +1201,7 @@ function Sidebar(): React.JSX.Element {
         <div
           className="note-menu note-menu--fixed"
           role="menu"
-          aria-label="Notes section actions"
+          aria-label="Notes actions"
           style={{ left: spaceMenu.x, top: spaceMenu.y }}
           onContextMenu={(event) => event.preventDefault()}
         >
@@ -1108,6 +1225,9 @@ function Sidebar(): React.JSX.Element {
           >
             New section
           </button>
+          <button type="button" className="note-menu__item" onClick={() => openSpaceEditor(null)}>
+            New space
+          </button>
           <button
             type="button"
             className="note-menu__item"
@@ -1128,6 +1248,115 @@ function Sidebar(): React.JSX.Element {
           >
             Collapse all
           </button>
+        </div>
+      )}
+      {spaceItemMenu &&
+        (() => {
+          const targetSpace = spaces.find((space) => space.id === spaceItemMenu.spaceId)
+          if (!targetSpace) return null
+          return (
+            <div
+              className="note-menu note-menu--fixed"
+              role="menu"
+              aria-label={`Actions for ${targetSpace.name}`}
+              style={{ left: spaceItemMenu.x, top: spaceItemMenu.y }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => openSpaceEditor(targetSpace.id)}
+              >
+                Rename or change emoji
+              </button>
+              <button
+                type="button"
+                className="note-menu__item note-menu__item--danger"
+                onClick={() => {
+                  setSpaceItemMenu(null)
+                  if (window.confirm(`Delete “${targetSpace.name}”?`)) deleteSpace(targetSpace.id)
+                }}
+              >
+                Delete space
+              </button>
+            </div>
+          )
+        })()}
+      {spaceEditor && (
+        <div
+          className="space-editor"
+          role="dialog"
+          aria-modal="true"
+          aria-label={spaceEditor.spaceId ? 'Edit space' : 'New space'}
+        >
+          <div className="space-editor__head">
+            <span className="space-editor__glyph" aria-hidden="true">
+              {spaceEmoji || '📁'}
+            </span>
+            <input
+              className="space-editor__name"
+              autoFocus
+              value={spaceName}
+              placeholder="Space name"
+              aria-label="Space name"
+              maxLength={40}
+              onChange={(event) => setSpaceName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') saveSpace()
+              }}
+            />
+          </div>
+          <div className="space-editor__emojis" role="group" aria-label="Choose an emoji">
+            {SPACE_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                className={`space-editor__emoji${spaceEmoji === emoji ? ' is-active' : ''}`}
+                aria-label={emoji}
+                aria-pressed={spaceEmoji === emoji}
+                onClick={() => setSpaceEmoji(emoji)}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <input
+            className="space-editor__custom"
+            value={spaceEmoji}
+            placeholder="Or type an emoji"
+            aria-label="Custom emoji"
+            maxLength={8}
+            onChange={(event) => setSpaceEmoji(event.target.value)}
+          />
+          <div className="space-editor__actions">
+            {spaceEditor.spaceId && (
+              <button
+                type="button"
+                className="space-editor__btn space-editor__btn--danger"
+                title="Delete space"
+                onClick={() => {
+                  setSpaceEditor(null)
+                  if (window.confirm('Delete this space?')) deleteSpace(spaceEditor.spaceId!)
+                }}
+              >
+                Delete
+              </button>
+            )}
+            <button
+              type="button"
+              className="space-editor__btn"
+              onClick={() => setSpaceEditor(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="space-editor__btn space-editor__btn--primary"
+              onClick={saveSpace}
+            >
+              {spaceEditor.spaceId ? 'Save' : 'Create'}
+            </button>
+          </div>
         </div>
       )}
       {menu &&
@@ -1232,112 +1461,191 @@ function Sidebar(): React.JSX.Element {
             </div>
           )
         })()}
-      {!needle && trashed.length > 0 && (
-        <div className="sidebar__trash-footer">
-          <div className="sidebar__section-block" aria-label="Trash">
-            <div className="sidebar__section-head">
+      <div className={`sidebar__spacebar${spaces.length > 3 ? ' is-carousel' : ''}`}>
+        <button
+          type="button"
+          className={`sidebar__trash-btn${trashOpen ? ' is-active' : ''}`}
+          title="Trash"
+          aria-label="Trash"
+          aria-haspopup="dialog"
+          aria-expanded={trashOpen}
+          onClick={() => setTrashOpen((value) => !value)}
+        >
+          <TrashIcon size={16} />
+          {trashed.length > 0 && <span className="sidebar__trash-badge">{trashed.length}</span>}
+        </button>
+        <div
+          className="sidebar__space-icons"
+          ref={spaceCarouselRef}
+          role="group"
+          aria-label="Spaces"
+          onScroll={(event) => {
+            if (spaces.length <= 3) return
+            const container = event.currentTarget
+            const center = container.getBoundingClientRect().left + container.clientWidth / 2
+            let closest: { id: string; distance: number } | null = null
+            for (const button of container.querySelectorAll<HTMLButtonElement>('[data-space-id]')) {
+              const rect = button.getBoundingClientRect()
+              const distance = Math.abs(rect.left + rect.width / 2 - center)
+              if (!closest || distance < closest.distance)
+                closest = { id: button.dataset.spaceId ?? '', distance }
+            }
+            if (closest?.id && closest.id !== activeSpaceId) setActiveSpace(closest.id)
+          }}
+        >
+          {spaces.map((space, index) => {
+            const distance = Math.abs(index - activeSpaceIndex)
+            const circularDistance =
+              spaces.length > 3 ? Math.min(distance, spaces.length - distance) : distance
+            return (
               <button
+                key={space.id}
                 type="button"
-                className="sidebar__section-head--toggle sidebar__trash-head"
-                aria-expanded={trashOpen}
-                onClick={() => setTrashOpen((value) => !value)}
+                data-space-id={space.id}
+                draggable
+                className={`sidebar__space-icon${space.id === activeSpaceId ? ' is-active' : ''}${spaces.length > 3 ? ` is-distance-${Math.min(circularDistance, 3)}` : ''}${spaceDraggingId === space.id ? ' is-dragging' : ''}${spaceDropHint?.id === space.id ? (spaceDropHint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
+                title={`${space.emoji} ${space.name}`}
+                aria-label={`${space.name}${space.id === activeSpaceId ? ', current space' : ''}`}
+                aria-pressed={space.id === activeSpaceId}
+                onClick={() => setActiveSpace(space.id)}
+                onDragStart={(event) => {
+                  spaceDragRef.current = space.id
+                  setSpaceDraggingId(space.id)
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('text/plain', space.id)
+                }}
+                onDragEnd={() => {
+                  spaceDragRef.current = null
+                  setSpaceDraggingId(null)
+                  setSpaceDropHint(null)
+                }}
+                onDragOver={(event) => {
+                  if (!spaceDragRef.current || spaceDragRef.current === space.id) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setSpaceDropHint({
+                    id: space.id,
+                    before: event.clientX < rect.left + rect.width / 2
+                  })
+                }}
+                onDragLeave={() =>
+                  setSpaceDropHint((hint) => (hint?.id === space.id ? null : hint))
+                }
+                onDrop={(event) => {
+                  event.preventDefault()
+                  const dragId = spaceDragRef.current
+                  spaceDragRef.current = null
+                  setSpaceDraggingId(null)
+                  setSpaceDropHint(null)
+                  if (!dragId || dragId === space.id) return
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  moveSpace(dragId, space.id, event.clientX < rect.left + rect.width / 2)
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  // Anchor the menu just above the icon so it reads as
+                  // attached to it (the bar sits at the very bottom).
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  const menuW = 176
+                  const menuH = 88
+                  setSpaceItemMenu({
+                    spaceId: space.id,
+                    x: Math.max(8, Math.min(rect.left, window.innerWidth - menuW - 8)),
+                    y: Math.max(8, rect.top - menuH - 6)
+                  })
+                }}
               >
-                <span className="sidebar__section-title">
-                  <TrashIcon size={11} />
-                  Trash · {trashed.length}
-                </span>
-                <ChevronDownIcon
-                  size={12}
-                  className={`sidebar__chevron${trashOpen ? ' is-open' : ''}`}
-                />
+                <span aria-hidden="true">{space.emoji}</span>
               </button>
+            )
+          })}
+        </div>
+        <button
+          type="button"
+          className="sidebar__space-add"
+          title="Create space"
+          aria-label="Create space"
+          onClick={() => openSpaceEditor(null)}
+        >
+          <PlusIcon size={18} />
+        </button>
+      </div>
+
+      {trashOpen && (
+        <div
+          className="rail-menu rail-menu--trash rail-menu--sidebar"
+          role="dialog"
+          aria-label="Trash"
+        >
+          <div className="rail-menu__head rail-menu__head--trash">
+            <span className="rail-menu__name">Trash</span>
+            <span className="rail-menu__count">{trashed.length}</span>
+            {trashed.length > 0 && (
               <button
                 type="button"
-                className="sidebar__empty-trash"
+                className="rail-menu__empty"
                 title="Destroy everything in Trash forever"
                 onClick={() => {
                   if (
                     window.confirm(
                       `Destroy all ${trashed.length} trashed note${trashed.length === 1 ? '' : 's'} forever? This cannot be undone.`
                     )
-                  ) {
+                  )
                     emptyTrash()
-                  }
                 }}
               >
                 Empty
               </button>
-            </div>
-            <div
-              className={`sidebar__trash-list${trashOpen ? ' is-open' : ''}`}
-              aria-hidden={!trashOpen}
-            >
-              <div className="sidebar__trash-list-inner">
-                {trashed.map((note) => {
-                  const label = note.title.trim() || 'Untitled'
-                  return (
-                    <div key={note.id} className="sidebar__trash-row" title={label}>
-                      <FileTextIcon size={12} />
-                      <span className="sidebar__label">{label}</span>
-                      <span className="sidebar__trash-days">
-                        {trashDaysLeft(note.deletedAt ?? nowMs, nowMs)} left
-                      </span>
-                      <button
-                        type="button"
-                        className="sidebar__icon-btn"
-                        title={`Restore ${label}`}
-                        aria-label={`Restore ${label}`}
-                        onClick={() => {
-                          restoreNote(note.id)
-                          openNoteInCurrentTab(note.id)
-                        }}
-                      >
-                        <RestoreIcon size={11} />
-                      </button>
-                      <button
-                        type="button"
-                        className="sidebar__icon-btn sidebar__icon-btn--danger"
-                        title={`Destroy ${label} forever`}
-                        aria-label={`Destroy ${label} forever`}
-                        onClick={() => destroyNoteForever(note)}
-                      >
-                        <TrashIcon size={11} />
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+            )}
+          </div>
+          <div className="rail-menu__list">
+            {trashed.length === 0 ? (
+              <p className="rail-menu__none">Trash is empty.</p>
+            ) : (
+              trashed.map((note) => (
+                <div key={note.id} className="rail-trash-row" title={noteLabel(note)}>
+                  <FileTextIcon size={13} />
+                  <span className="rail-trash-row__title">{noteLabel(note)}</span>
+                  <span className="rail-trash-row__days">
+                    {daysLeft(note.deletedAt ?? nowMs, nowMs)}
+                  </span>
+                  <button
+                    type="button"
+                    className="rail-trash-row__btn"
+                    title={`Restore ${noteLabel(note)}`}
+                    aria-label={`Restore ${noteLabel(note)}`}
+                    onClick={() => {
+                      restoreNote(note.id)
+                      openNoteInCurrentTab(note.id)
+                      setTrashOpen(false)
+                    }}
+                  >
+                    <RestoreIcon size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="rail-trash-row__btn rail-trash-row__btn--danger"
+                    title={`Delete ${noteLabel(note)} forever`}
+                    aria-label={`Delete ${noteLabel(note)} forever`}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Destroy "${noteLabel(note)}" forever? This cannot be undone.`
+                        )
+                      )
+                        destroyNote(note.id)
+                    }}
+                  >
+                    <TrashIcon size={13} />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
 
-      <div className="sidebar__footer">
-        <span className={`sidebar__state sidebar__state--${coreState}`} />
-        <span className="sidebar__label">Core: {coreState}</span>
-        <button
-          type="button"
-          className={`sidebar__icon-btn sidebar__footer-btn${backgroundListening ? '' : ' is-muted'}`}
-          title={backgroundListening ? 'Turn off Always listening' : 'Turn on Always listening'}
-          aria-label={
-            backgroundListening ? 'Turn off Always listening' : 'Turn on Always listening'
-          }
-          aria-pressed={!backgroundListening}
-          onClick={() => setBackgroundListening(!backgroundListening)}
-        >
-          {backgroundListening ? <MicIcon size={18} /> : <MicMutedIcon size={18} />}
-        </button>
-        <button
-          type="button"
-          className={`sidebar__icon-btn sidebar__footer-btn${activeNav === 'settings' ? ' is-active' : ''}`}
-          title="Settings"
-          aria-label="Settings"
-          aria-pressed={activeNav === 'settings'}
-          onClick={() => toggleNav('settings')}
-        >
-          <SettingsIcon size={20} />
-        </button>
-      </div>
       <div
         className="sidebar__resize"
         role="separator"

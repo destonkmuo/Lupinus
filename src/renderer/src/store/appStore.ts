@@ -44,6 +44,14 @@ export interface Note {
   updatedAt: number
   /** Trash timestamp, or null/undefined while the note is live. */
   deletedAt: number | null
+  /** Owning note space. Missing only in legacy vault data. */
+  spaceId?: string
+}
+
+export interface NoteSpace {
+  id: string
+  name: string
+  emoji: string
 }
 
 /** Trash auto-destroys notes 30 days after they were trashed. */
@@ -152,6 +160,13 @@ export type { PomodoroPhase }
 
 interface AppState {
   coreState: CoreState
+  spaces: NoteSpace[]
+  activeSpaceId: string
+  createSpace: (name: string, emoji: string) => string
+  updateSpace: (id: string, patch: Partial<Pick<NoteSpace, 'name' | 'emoji'>>) => void
+  deleteSpace: (id: string) => void
+  setActiveSpace: (id: string) => void
+  moveSpace: (dragId: string, targetId: string | null, before: boolean) => void
   notes: Note[]
   /** Manual sidebar order (note ids). Missing ids render first, by recency. */
   noteOrder: string[]
@@ -229,6 +244,9 @@ interface AppState {
   showTodayEvent: (id: string) => void
   showAllTodayEvents: () => void
   toggleSidebar: () => void
+  /** Transient signal (incremented) asking App to re-lock the app. */
+  lockRequested: number
+  requestLock: () => void
   setSplitTab: (id: string | null) => void
   setSplitRatio: (ratio: number) => void
   markAgentSeen: () => void
@@ -258,7 +276,7 @@ interface AppState {
   closeAllGroups: () => void
   moveTab: (dragId: string, targetId: string | null, before: boolean) => void
   moveNote: (dragId: string, targetId: string | null, before: boolean) => void
-  createSection: (title?: string) => string
+  createSection: (title?: string, spaceId?: string) => string
   renameSection: (id: string, title: string) => void
   deleteSection: (id: string) => void
   moveSection: (dragId: string, targetId: string | null, before: boolean) => void
@@ -280,7 +298,7 @@ interface AppState {
   restoreNote: (id: string) => void
   destroyNote: (id: string) => void
   emptyTrash: () => void
-  createNote: (title?: string, sectionId?: string | null) => string
+  createNote: (title?: string, sectionId?: string | null, spaceId?: string) => string
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'content'>>) => void
   deleteNote: (id: string) => void
   initVault: (force?: boolean) => Promise<void>
@@ -334,6 +352,8 @@ function uid(): string {
 export interface NoteSection {
   id: string
   title: string
+  /** Owning space: sections are independent per space. */
+  spaceId: string
 }
 
 /** Google-style tab group colors. */
@@ -699,6 +719,8 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       // The mic pipeline is always listening, so the core starts attentive.
       coreState: 'idle',
+      spaces: [{ id: 'default', name: 'Personal', emoji: '📝' }],
+      activeSpaceId: 'default',
       notes: [],
       noteOrder: [],
       noteSections: [],
@@ -736,6 +758,7 @@ export const useAppStore = create<AppState>()(
       theme: 'dark',
       sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
       sidebarCollapsed: false,
+      lockRequested: 0,
       dismissedTodayEvents: [],
       splitTabId: null,
       splitRatio: SPLIT_RATIO_DEFAULT,
@@ -782,6 +805,7 @@ export const useAppStore = create<AppState>()(
         })),
       showAllTodayEvents: () => set({ dismissedTodayEvents: [] }),
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      requestLock: () => set((state) => ({ lockRequested: state.lockRequested + 1 })),
       setSplitTab: (splitTabId) => set({ splitTabId }),
       setSplitRatio: (splitRatio) => set({ splitRatio: clampSplitRatio(splitRatio) }),
       markAgentSeen: () =>
@@ -793,6 +817,73 @@ export const useAppStore = create<AppState>()(
           return latest ? { lastSeenAgentId: latest } : {}
         }),
       setQuery: (query) => set({ query }),
+      createSpace: (name, emoji) => {
+        const id = uid()
+        set((state) => ({
+          spaces: [
+            ...state.spaces,
+            { id, name: name.trim() || 'New space', emoji: emoji.trim() || '📁' }
+          ],
+          activeSpaceId: id,
+          // Adopt notes left space-less (e.g. after deleting the last space)
+          // so they reappear here instead of being stranded.
+          notes: state.notes.map((note) => (note.spaceId ? note : { ...note, spaceId: id }))
+        }))
+        return id
+      },
+      updateSpace: (id, patch) =>
+        set((state) => ({
+          spaces: state.spaces.map((space) =>
+            space.id === id
+              ? {
+                  ...space,
+                  ...(patch.name !== undefined ? { name: patch.name.trim() || space.name } : {}),
+                  ...(patch.emoji !== undefined ? { emoji: patch.emoji.trim() || space.emoji } : {})
+                }
+              : space
+          )
+        })),
+      deleteSpace: (id) =>
+        set((state) => {
+          if (!state.spaces.some((space) => space.id === id)) return {}
+          // Zero spaces is allowed: notes fall into the space-less bucket.
+          const spaces = state.spaces.filter((space) => space.id !== id)
+          const replacementId = spaces[0]?.id ?? ''
+          // The space's sections go with it; drop their note mappings too.
+          const removedSections = new Set(
+            state.noteSections.filter((s) => s.spaceId === id).map((s) => s.id)
+          )
+          const noteSection: Record<string, string> = {}
+          for (const [noteId, sectionId] of Object.entries(state.noteSection)) {
+            if (!removedSections.has(sectionId)) noteSection[noteId] = sectionId
+          }
+          return {
+            spaces,
+            activeSpaceId: state.activeSpaceId === id ? replacementId : state.activeSpaceId,
+            noteSections: state.noteSections.filter((s) => s.spaceId !== id),
+            noteSection,
+            notes: state.notes.map((note) =>
+              note.spaceId === id ? { ...note, spaceId: replacementId } : note
+            )
+          }
+        }),
+      setActiveSpace: (id) =>
+        set((state) =>
+          state.spaces.some((space) => space.id === id) ? { activeSpaceId: id } : {}
+        ),
+      moveSpace: (dragId, targetId, before) =>
+        set((state) => {
+          if (dragId === targetId) return {}
+          const from = state.spaces.findIndex((space) => space.id === dragId)
+          if (from < 0) return {}
+          const dragged = state.spaces[from]
+          const without = state.spaces.filter((space) => space.id !== dragId)
+          if (!targetId) return { spaces: [...without, dragged] }
+          let to = without.findIndex((space) => space.id === targetId)
+          if (to < 0) return { spaces: [...without, dragged] }
+          if (!before) to += 1
+          return { spaces: [...without.slice(0, to), dragged, ...without.slice(to)] }
+        }),
       setActiveTab: (id) =>
         set((state) => ({
           activeTabId: id,
@@ -1197,8 +1288,12 @@ export const useAppStore = create<AppState>()(
           if (!before) to += 1
           return { noteOrder: [...without.slice(0, to), dragId, ...without.slice(to)] }
         }),
-      createSection: (title?: string) => {
-        const section: NoteSection = { id: uid(), title: (title ?? '').trim() || 'New section' }
+      createSection: (title?: string, spaceId?: string) => {
+        const section: NoteSection = {
+          id: uid(),
+          title: (title ?? '').trim() || 'New section',
+          spaceId: spaceId ?? get().activeSpaceId
+        }
         set((state) => ({ noteSections: [...state.noteSections, section] }))
         return section.id
       },
@@ -1287,8 +1382,12 @@ export const useAppStore = create<AppState>()(
           else delete imageLayout[noteId]
           return { imageLayout }
         }),
-      createNote: (title?: string, sectionId?: string | null) => {
-        const note = { ...blankNote(), title: (title ?? '').trim() }
+      createNote: (title?: string, sectionId?: string | null, spaceId?: string) => {
+        const note = {
+          ...blankNote(),
+          title: (title ?? '').trim(),
+          spaceId: spaceId ?? get().activeSpaceId
+        }
         const tab = noteTab(note.id)
         set((state) => {
           const taken = new Set(state.notes.map((n) => n.fileName))
@@ -1345,8 +1444,8 @@ export const useAppStore = create<AppState>()(
         }))
       },
       deleteNote: (id) => {
-        // Trash, not destroy: the record keeps its order/section slots so
-        // restore lands it back in place. initVault auto-purges trash older
+        // Trash, not destroy: the record keeps its order slot so restore
+        // lands it back in place. initVault auto-purges trash older
         // than 30 days; destroyNote() removes immediately.
         const removed = get().notes.find((n) => n.id === id)
         if (!removed || removed.deletedAt) return
@@ -1531,7 +1630,8 @@ export const useAppStore = create<AppState>()(
                     fileName: entry.fileName,
                     createdAt: Math.round(entry.birthtimeMs) || Date.now(),
                     updatedAt: Math.round(entry.mtimeMs) || Date.now(),
-                    deletedAt: null
+                    deletedAt: null,
+                    spaceId: state.spaces[0]?.id ?? ''
                   })
                 }
                 taken.add(entry.fileName)
@@ -2021,6 +2121,8 @@ export const useAppStore = create<AppState>()(
       name: 'seemo-store',
       // Only documents, open tabs, sidebar order and chat history persist.
       partialize: (state) => ({
+        spaces: state.spaces,
+        activeSpaceId: state.activeSpaceId,
         notes: state.notes,
         noteOrder: state.noteOrder,
         noteSections: state.noteSections,
@@ -2086,6 +2188,8 @@ export const useAppStore = create<AppState>()(
           Pick<
             AppState,
             | 'notes'
+            | 'spaces'
+            | 'activeSpaceId'
             | 'noteOrder'
             | 'noteSections'
             | 'noteSection'
@@ -2121,7 +2225,26 @@ export const useAppStore = create<AppState>()(
             | 'customAlarm'
           >
         >
-        const notes = saved.notes ?? []
+        const spaces = (saved.spaces ?? []).filter(
+          (space) =>
+            space &&
+            typeof space.id === 'string' &&
+            typeof space.name === 'string' &&
+            typeof space.emoji === 'string'
+        )
+        // A brand-new install starts with one space; an intentionally emptied
+        // one (persisted as []) stays at zero.
+        if (persisted == null && spaces.length === 0) {
+          spaces.push({ id: 'default', name: 'Personal', emoji: '📝' })
+        }
+        const activeSpaceId = spaces.some((space) => space.id === saved.activeSpaceId)
+          ? saved.activeSpaceId!
+          : (spaces[0]?.id ?? '')
+        const spaceIds = new Set(spaces.map((space) => space.id))
+        const notes = (saved.notes ?? []).map((note) => ({
+          ...note,
+          spaceId: note.spaceId && spaceIds.has(note.spaceId) ? note.spaceId : (spaces[0]?.id ?? '')
+        }))
         const noteIds = new Set(notes.map((n) => n.id))
         // The previously active nav tab (if any) becomes the selected view.
         const legacyActiveNav = (() => {
@@ -2162,11 +2285,16 @@ export const useAppStore = create<AppState>()(
         const historyIndex = pruned.historyIndex
         const messages = (saved.messages ?? []).slice(-MAX_CHAT_MESSAGES)
         const noteOrder = (saved.noteOrder ?? []).filter((id) => noteIds.has(id))
-        // Sections survive restarts; drop mappings for notes or sections
-        // that no longer exist so orphans render ungrouped.
-        const noteSections = (saved.noteSections ?? []).filter(
-          (s) => s && typeof s.id === 'string' && typeof s.title === 'string'
-        )
+        // Sections survive restarts and belong to a space; legacy sections
+        // without a space fall back to the first. Drop mappings for notes or
+        // sections that no longer exist so orphans render ungrouped.
+        const noteSections = (saved.noteSections ?? [])
+          .filter((s) => s && typeof s.id === 'string' && typeof s.title === 'string')
+          .map((s) => ({
+            id: s.id,
+            title: s.title,
+            spaceId: s.spaceId && spaceIds.has(s.spaceId) ? s.spaceId : (spaces[0]?.id ?? '')
+          }))
         const sectionIds = new Set(noteSections.map((s) => s.id))
         const noteSection: Record<string, string> = {}
         for (const [noteId, sectionId] of Object.entries(saved.noteSection ?? {})) {
@@ -2212,6 +2340,8 @@ export const useAppStore = create<AppState>()(
         }
         return {
           ...current,
+          spaces,
+          activeSpaceId,
           notes,
           noteOrder,
           noteSections,

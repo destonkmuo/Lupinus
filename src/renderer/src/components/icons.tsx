@@ -488,3 +488,36 @@ export function QuizIcon(props: IconProps): React.JSX.Element {
     </IconBase>
   )
 }
+
+/** Profile: head and shoulders. */
+export function UserIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </IconBase>
+  )
+}
+
+/** Change user: a person with a circulating arrow. */
+export function SwitchUserIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 20a5.5 5.5 0 0 1 8.2-4.9" />
+      <path d="M17.5 4.5 20 7l-2.5 2.5" />
+      <path d="M20 7h-5.2a4 4 0 0 0-3.6 2.2" />
+    </IconBase>
+  )
+}
+
+/** Log out: door with an outbound arrow. */
+export function LogOutIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <path d="m16 17 5-5-5-5" />
+      <path d="M21 12H9" />
+    </IconBase>
+  )
+}
