@@ -66,11 +66,13 @@ function Rail(): React.JSX.Element {
     }
     const close = (): void => {
       if (closeTimer.current !== null) return
+      // Generous grace so briefly slipping off the bar (a miss on the way to
+      // a button) doesn't snap it shut; re-entering cancels via open().
       closeTimer.current = window.setTimeout(() => {
         closeTimer.current = null
         openRef.current = false
         setHovered(false)
-      }, 160)
+      }, 300)
     }
     const onMove = (event: PointerEvent): void => {
       const { clientX: x, clientY: y } = event

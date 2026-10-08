@@ -515,6 +515,8 @@ body {
   padding: 0 2px;
 }
 
+/* Display-only strip: reflects the active space (centered); switching happens
+   via swipe or click, never by scrolling the strip itself. */
 .sidebar__space-icons {
   display: flex;
   min-width: 0;
@@ -522,10 +524,9 @@ body {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   scrollbar-width: none;
-  scroll-snap-type: x mandatory;
   overscroll-behavior-x: contain;
 }
 
@@ -668,37 +669,91 @@ body {
   color: var(--ev-c-text-1);
 }
 
-/* Notes pane slides/fades in the direction of the last space switch. */
+/* Space swap: the outgoing space's frozen pane slides out while the incoming
+   one slides in from the direction of the swipe. */
+.sidebar__space-swap {
+  position: relative;
+  overflow: hidden;
+}
+
 .sidebar__space-pane {
   display: flex;
   flex-direction: column;
 }
 
-@keyframes space-pane-in-right {
+.sidebar__space-exit {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  will-change: transform, opacity;
+}
+
+@keyframes space-in-next {
   from {
     opacity: 0;
-    transform: translateX(20px);
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
-@keyframes space-pane-in-left {
+@keyframes space-in-prev {
   from {
     opacity: 0;
-    transform: translateX(-20px);
+    transform: translateX(-28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
-.sidebar__space-pane.is-right {
-  animation: space-pane-in-right 260ms cubic-bezier(0.32, 0.72, 0, 1);
+@keyframes space-out-next {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
 }
 
-.sidebar__space-pane.is-left {
-  animation: space-pane-in-left 260ms cubic-bezier(0.32, 0.72, 0, 1);
+@keyframes space-out-prev {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+.sidebar__space-pane.is-in-next {
+  animation: space-in-next 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sidebar__space-pane.is-in-prev {
+  animation: space-in-prev 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sidebar__space-exit.is-out-next {
+  animation: space-out-next 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.sidebar__space-exit.is-out-prev {
+  animation: space-out-prev 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar__space-pane.is-right,
-  .sidebar__space-pane.is-left {
+  .sidebar__space-pane.is-in-next,
+  .sidebar__space-pane.is-in-prev,
+  .sidebar__space-exit.is-out-next,
+  .sidebar__space-exit.is-out-prev {
     animation: none;
   }
 }
@@ -1554,7 +1609,7 @@ button.sidebar__section-title:hover {
   background: linear-gradient(180deg, transparent 0%, rgba(106, 176, 255, 0.06) 100%);
 }
 
-/* Grouping block headers (Favorites, Trash). */
+/* Grouping block headers (Bookmarks, Trash). */
 .sidebar__section-block {
   margin-top: 12px;
 }
@@ -1703,14 +1758,13 @@ button.sidebar__section-title:hover {
   user-select: text;
 }
 
-.sidebar__fav-title {
+.sidebar__bookmark-title {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #ffbe5a;
 }
 
-/* Row action menu (rename / favorite / new tab / delete). */
+/* Row action menu (rename / bookmark / new tab / delete). */
 .note-menu__backdrop {
   position: fixed;
   inset: 0;
@@ -2284,19 +2338,77 @@ button.sidebar__status:hover {
   justify-content: space-between;
   gap: 12px;
   padding: 5px 16px;
-  border-bottom: 1px solid var(--line);
   flex: none;
 }
 
 .note__meta {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ev-c-text-3);
+  white-space: nowrap;
 }
 
 .note__actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: none;
+}
+
+/* Breadcrumb hierarchy (parent → child → this note), left-aligned with real
+   arrow icons between levels. Ancestors navigate in place; the current note
+   is plain text. */
+.note__crumbs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ev-c-text-3);
+}
+
+.note__crumb-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: none;
+}
+
+.note__crumb-wrap:last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.note__crumb-sep {
+  flex: none;
+  opacity: 0.7;
+}
+
+button.note__crumb {
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 5px;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+  cursor: pointer;
+}
+
+button.note__crumb:hover {
+  background: var(--hover-strong);
+  color: var(--ev-c-text-1);
+}
+
+.note__crumb--current {
+  padding: 2px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ev-c-text-2);
 }
 
 .note__actions .icon-btn {
@@ -2325,6 +2437,15 @@ button.sidebar__status:hover {
 .icon-btn--danger:hover {
   background: rgba(255, 80, 80, 0.14);
   color: var(--danger);
+}
+
+/* Active toggle state (e.g. the bookmarked note): accent color + filled glyph. */
+.icon-btn.is-active {
+  color: var(--accent);
+}
+
+.icon-btn.is-active svg {
+  fill: currentColor;
 }
 
 .note__scroll {
@@ -5836,6 +5957,12 @@ select.dlg__input {
 }
 
 .sidebar__search {
+  -webkit-app-region: no-drag;
+}
+
+/* The status dot is a button (opens SeeMO): it must also opt out of the
+   sidebar-top drag strip or clicks become window drags. */
+.sidebar__statusrow {
   -webkit-app-region: no-drag;
 }
 

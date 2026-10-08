@@ -273,10 +273,10 @@ export function MailIcon(props: IconProps): React.JSX.Element {
   )
 }
 
-export function StarIcon(props: IconProps): React.JSX.Element {
+export function BookmarkIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>
-      <path d="m12 2.5 2.9 6.1 6.6.8-4.9 4.6 1.3 6.6-5.9-3.3-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z" />
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
     </IconBase>
   )
 }

@@ -12,7 +12,16 @@ import {
   type ImageSide
 } from '../images'
 
-import { FileTextIcon, CardsIcon, MindmapIcon, QuizIcon, MoreIcon } from '../components/icons'
+import {
+  FileTextIcon,
+  CardsIcon,
+  MindmapIcon,
+  QuizIcon,
+  MoreIcon,
+  BookmarkIcon,
+  ChevronRightIcon
+} from '../components/icons'
+import { parseWikiLinks, resolveWikiTarget } from '../notes'
 import { useAppStore, type ImageLayout } from '../store/appStore'
 
 /** Stable empty layout so memo deps don't churn. */
@@ -30,9 +39,14 @@ function relativeTime(timestamp: number): string {
 
 function Note({ noteId }: { noteId: string }): React.JSX.Element {
   const note = useAppStore((state) => state.notes.find((n) => n.id === noteId) ?? null)
+  const notes = useAppStore((state) => state.notes)
   const updateNote = useAppStore((state) => state.updateNote)
   const deleteNote = useAppStore((state) => state.deleteNote)
   const imageLayout = useAppStore((state) => state.imageLayout)
+  const bookmarks = useAppStore((state) => state.bookmarks)
+  const toggleBookmark = useAppStore((state) => state.toggleBookmark)
+  const openNoteInCurrentTab = useAppStore((state) => state.openNoteInCurrentTab)
+  const isBookmarked = note !== null && bookmarks.includes(note.id)
 
   const [dropActive, setDropActive] = useState(false)
   const [dropStatus, setDropStatus] = useState<{ msg: string; error: boolean } | null>(null)
@@ -96,6 +110,36 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   }, [saveId, saveTitle, saveContent])
 
   const edited = useMemo(() => (note ? relativeTime(note.updatedAt) : ''), [note])
+
+  // Breadcrumb hierarchy (root → … → parent → this note) from the wiki-link
+  // graph, cycle-safe and capped so a deep chain never floods the bar.
+  const crumbs = useMemo(() => {
+    const byId = new Map(notes.map((n) => [n.id, n]))
+    const parents = new Map<string, string[]>()
+    for (const n of notes) {
+      if (n.deletedAt) continue
+      for (const link of parseWikiLinks(n.content)) {
+        const targetId = resolveWikiTarget(link.target, notes)
+        if (!targetId || targetId === n.id) continue
+        const list = parents.get(targetId) ?? []
+        if (!list.includes(n.id)) list.push(n.id)
+        parents.set(targetId, list)
+      }
+    }
+    const ids = [noteId]
+    const seen = new Set<string>([noteId])
+    let current = noteId
+    for (let i = 0; i < 4; i++) {
+      const next = (parents.get(current) ?? []).find(
+        (id) => !seen.has(id) && !byId.get(id)?.deletedAt
+      )
+      if (!next) break
+      seen.add(next)
+      ids.unshift(next)
+      current = next
+    }
+    return ids.map((id) => ({ id, title: byId.get(id)?.title.trim() || 'Untitled' }))
+  }, [notes, noteId])
 
   // Hidden footer is never rendered: the editor only touches the body, and
   // right-click → Add appends `[[links]]` to the footer instead of the body.
@@ -349,11 +393,47 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
       onDrop={(event) => void onDropPictures(event)}
     >
       <header className="note__bar">
-        <span className="note__meta">
-          Edited {edited}
-          {note.fileName ? ` · ${note.fileName}` : ''}
-        </span>
+        <nav className="note__crumbs" aria-label="Note hierarchy">
+          {crumbs.map((crumb, index) => {
+            const last = index === crumbs.length - 1
+            return (
+              <span key={crumb.id} className="note__crumb-wrap">
+                {index > 0 && (
+                  <ChevronRightIcon size={13} className="note__crumb-sep" aria-hidden="true" />
+                )}
+                {last ? (
+                  <span className="note__crumb note__crumb--current" aria-current="page">
+                    {crumb.title}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="note__crumb"
+                    title={crumb.title}
+                    onClick={() => openNoteInCurrentTab(crumb.id)}
+                  >
+                    {crumb.title}
+                  </button>
+                )}
+              </span>
+            )
+          })}
+        </nav>
         <div className="note__actions">
+          <span className="note__meta">
+            Edited {edited}
+            {note.fileName ? ` · ${note.fileName}` : ''}
+          </span>
+          <button
+            type="button"
+            className={`icon-btn${isBookmarked ? ' is-active' : ''}`}
+            title={isBookmarked ? 'Remove bookmark' : 'Bookmark this note'}
+            aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this note'}
+            aria-pressed={isBookmarked}
+            onClick={() => toggleBookmark(note.id)}
+          >
+            <BookmarkIcon size={16} />
+          </button>
           <button
             type="button"
             className="icon-btn"
@@ -373,7 +453,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
               }
             }}
           >
-            <MoreIcon size={15} />
+            <MoreIcon size={16} />
           </button>
         </div>
       </header>

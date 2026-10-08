@@ -176,8 +176,8 @@ interface AppState {
   noteOrder: string[]
   /** User-defined sidebar sections (dividers), in display order. */
   noteSections: NoteSection[]
-  /** Favorite note ids (sidebar lens). Stale ids render nothing. */
-  favorites: string[]
+  /** Bookmarked note ids (sidebar lens). Stale ids render nothing. */
+  bookmarks: string[]
   /** noteId -> image src -> layout. Persisted per note, saved on change. */
   imageLayout: Record<string, Record<string, ImageLayout>>
   /** Note awaiting an in-sidebar rename (set on creation, consumed once). */
@@ -203,6 +203,8 @@ interface AppState {
   tabGroup: Record<string, string>
   /** Collapsed group ids hide their tabs until expanded. */
   collapsedTabGroups: string[]
+  /** Tab-bar snapshots of inactive spaces, keyed by space id. */
+  spaceTabs: Record<string, SpaceTabs>
   query: string
   vaultPath: string | null
   vaultReady: boolean
@@ -285,7 +287,7 @@ interface AppState {
   deleteSection: (id: string) => void
   moveSection: (dragId: string, targetId: string | null, before: boolean) => void
   setNoteSection: (noteId: string, sectionId: string | null) => void
-  toggleFavorite: (noteId: string) => void
+  toggleBookmark: (noteId: string) => void
   setImageSide: (noteId: string, src: string, side: ImageSide) => void
   setImageSize: (noteId: string, src: string, w: number | null) => void
   clearImageFloat: (noteId: string, src: string) => void
@@ -379,6 +381,30 @@ export interface TabGroup {
   color: string
 }
 
+/**
+ * A space's tab bar, parked while another space is active. The live
+ * `tabs`/`activeTabId`/… fields always mirror the active space, so every
+ * tab action keeps working unchanged — switching spaces just swaps which
+ * snapshot is live.
+ */
+export interface SpaceTabs {
+  tabs: Tab[]
+  activeTabId: string | null
+  /**
+   * The nav page selected in this space (Home, Tasks, …), or null when a note
+   * tab is showing. Parked with the tab bar so each space reopens where it was.
+   * `undefined` on legacy data means "derive from the tabs".
+   */
+  activeNav?: NavKey | null
+  tabRecency: string[]
+  tabHistory: string[]
+  historyIndex: number
+  splitTabId: string | null
+  tabGroups: TabGroup[]
+  tabGroup: Record<string, string>
+  collapsedTabGroups: string[]
+}
+
 /** Drop group assignments for tabs that no longer exist. */
 function pruneTabGroupMap(map: Record<string, string>, keep: Set<string>): Record<string, string> {
   const next: Record<string, string> = {}
@@ -430,6 +456,163 @@ function pruneHistory(
     return { tabHistory, historyIndex: tabHistory.indexOf(current) }
   }
   return { tabHistory, historyIndex: Math.min(Math.max(index, 0), tabHistory.length - 1) }
+}
+
+/** Fresh, empty tab bar for a space that has never held tabs. */
+function emptySpaceTabs(): SpaceTabs {
+  return {
+    tabs: [],
+    activeTabId: null,
+    // A tab-free space falls back to Home.
+    activeNav: 'home',
+    tabRecency: [],
+    tabHistory: [],
+    historyIndex: -1,
+    splitTabId: null,
+    tabGroups: [],
+    tabGroup: {},
+    collapsedTabGroups: []
+  }
+}
+
+/** Park the live tab bar so it can be restored when its space returns. */
+function snapshotTabs(state: {
+  tabs: Tab[]
+  activeTabId: string | null
+  activeNav: NavKey | null
+  tabRecency: string[]
+  tabHistory: string[]
+  historyIndex: number
+  splitTabId: string | null
+  tabGroups: TabGroup[]
+  tabGroup: Record<string, string>
+  collapsedTabGroups: string[]
+}): SpaceTabs {
+  return {
+    tabs: state.tabs,
+    activeTabId: state.activeTabId,
+    activeNav: state.activeNav,
+    tabRecency: state.tabRecency,
+    tabHistory: state.tabHistory,
+    historyIndex: state.historyIndex,
+    splitTabId: state.splitTabId,
+    tabGroups: state.tabGroups,
+    tabGroup: state.tabGroup,
+    collapsedTabGroups: state.collapsedTabGroups
+  }
+}
+
+/**
+ * Validate a parked tab bar against the live notes: drop tabs (and their
+ * recency/history/group/split references) for notes that are gone or
+ * trashed, so a restored space never points at a missing page.
+ */
+function restoreSpaceTabs(snap: SpaceTabs | undefined, notes: Note[]): SpaceTabs {
+  const base = snap ?? emptySpaceTabs()
+  const liveIds = new Set(notes.filter((n) => !n.deletedAt).map((n) => n.id))
+  const tabs = base.tabs.filter((t) => t && t.kind === 'note' && liveIds.has(t.noteId))
+  const tabIds = new Set(tabs.map((t) => t.id))
+  const activeTabId =
+    base.activeTabId !== null && tabIds.has(base.activeTabId) ? base.activeTabId : null
+  const tabRecency = base.tabRecency.filter((id) => tabIds.has(id))
+  const history = pruneHistory(base.tabHistory, base.historyIndex, tabIds)
+  const tabGroups = base.tabGroups.filter((g) => g && typeof g.id === 'string')
+  const groupIds = new Set(tabGroups.map((g) => g.id))
+  const tabGroup: Record<string, string> = {}
+  for (const [tabId, groupId] of Object.entries(base.tabGroup ?? {})) {
+    if (tabIds.has(tabId) && groupIds.has(groupId)) tabGroup[tabId] = groupId
+  }
+  const collapsedTabGroups = base.collapsedTabGroups.filter((id) => groupIds.has(id))
+  const splitTabId =
+    base.splitTabId !== null && tabIds.has(base.splitTabId) && base.splitTabId !== activeTabId
+      ? base.splitTabId
+      : null
+  // Legacy snapshots lack activeNav: derive it from the restored tabs.
+  const activeNav = base.activeNav === undefined ? (activeTabId ? null : 'home') : base.activeNav
+  return {
+    tabs,
+    activeTabId,
+    activeNav,
+    tabRecency,
+    tabHistory: history.tabHistory,
+    historyIndex: history.historyIndex,
+    splitTabId,
+    tabGroups,
+    tabGroup,
+    collapsedTabGroups
+  }
+}
+
+const NAV_KEYS: readonly NavKey[] = [
+  'home',
+  'graph',
+  'tasks',
+  'calendar',
+  'agent',
+  'misc',
+  'email',
+  'settings'
+]
+
+/** Shape-check persisted per-space tab bars (old/corrupt entries are skipped). */
+function sanitizeSpaceTabs(raw: unknown, notes: Note[]): Record<string, SpaceTabs> {
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, SpaceTabs> = {}
+  for (const [spaceId, snap] of Object.entries(raw as Record<string, unknown>)) {
+    if (!snap || typeof snap !== 'object') continue
+    const s = snap as Partial<SpaceTabs>
+    // Preserve null (note tab showing) / valid nav; anything else is left
+    // undefined so restoreSpaceTabs derives it from the tabs.
+    const activeNav =
+      s.activeNav === null
+        ? null
+        : typeof s.activeNav === 'string' && (NAV_KEYS as readonly string[]).includes(s.activeNav)
+          ? (s.activeNav as NavKey)
+          : undefined
+    out[spaceId] = restoreSpaceTabs(
+      {
+        activeNav,
+        tabs: Array.isArray(s.tabs)
+          ? s.tabs.filter(
+              (t): t is Tab =>
+                !!t && typeof t.id === 'string' && t.kind === 'note' && typeof t.noteId === 'string'
+            )
+          : [],
+        activeTabId: typeof s.activeTabId === 'string' ? s.activeTabId : null,
+        tabRecency: Array.isArray(s.tabRecency)
+          ? s.tabRecency.filter((id): id is string => typeof id === 'string')
+          : [],
+        tabHistory: Array.isArray(s.tabHistory)
+          ? s.tabHistory.filter((id): id is string => typeof id === 'string')
+          : [],
+        historyIndex: typeof s.historyIndex === 'number' ? s.historyIndex : -1,
+        splitTabId: typeof s.splitTabId === 'string' ? s.splitTabId : null,
+        tabGroups: Array.isArray(s.tabGroups)
+          ? s.tabGroups.filter(
+              (g): g is TabGroup =>
+                !!g &&
+                typeof g.id === 'string' &&
+                typeof g.name === 'string' &&
+                typeof g.color === 'string'
+            )
+          : [],
+        tabGroup:
+          s.tabGroup && typeof s.tabGroup === 'object'
+            ? Object.fromEntries(
+                Object.entries(s.tabGroup).filter(
+                  (entry): entry is [string, string] =>
+                    typeof entry[0] === 'string' && typeof entry[1] === 'string'
+                )
+              )
+            : {},
+        collapsedTabGroups: Array.isArray(s.collapsedTabGroups)
+          ? s.collapsedTabGroups.filter((id): id is string => typeof id === 'string')
+          : []
+      },
+      notes
+    )
+  }
+  return out
 }
 
 function blankNote(): Note {
@@ -731,7 +914,7 @@ export const useAppStore = create<AppState>()(
       noteOrder: [],
       noteSections: [],
       noteSection: {},
-      favorites: [],
+      bookmarks: [],
       imageLayout: {},
       renamingNoteId: null,
       tabs: [],
@@ -743,6 +926,7 @@ export const useAppStore = create<AppState>()(
       tabGroups: [],
       tabGroup: {},
       collapsedTabGroups: [],
+      spaceTabs: {},
       query: '',
       vaultPath: null,
       vaultReady: false,
@@ -831,6 +1015,8 @@ export const useAppStore = create<AppState>()(
           const taken = new Set(state.spaces.map((s) => s.name.trim()))
           let n = 1
           while (taken.has(`Space ${n}`)) n += 1
+          // Park the old space's tab bar, then start the new space tab-free.
+          const spaceTabs = { ...state.spaceTabs, [state.activeSpaceId]: snapshotTabs(state) }
           return {
             spaces: [
               // An empty emoji means "dot mode": the spacebar shows a plain dot.
@@ -846,7 +1032,9 @@ export const useAppStore = create<AppState>()(
             activeSpaceId: id,
             // Adopt notes left space-less (e.g. after deleting the last space)
             // so they reappear here instead of being stranded.
-            notes: state.notes.map((note) => (note.spaceId ? note : { ...note, spaceId: id }))
+            notes: state.notes.map((note) => (note.spaceId ? note : { ...note, spaceId: id })),
+            ...emptySpaceTabs(),
+            spaceTabs
           }
         })
         return id
@@ -878,6 +1066,11 @@ export const useAppStore = create<AppState>()(
           for (const [noteId, sectionId] of Object.entries(state.noteSection)) {
             if (!removedSections.has(sectionId)) noteSection[noteId] = sectionId
           }
+          // Drop the deleted space's parked tab bar. The live tab bar stays
+          // put (it now belongs to the replacement space) and will be parked
+          // under it on the next switch.
+          const spaceTabs = { ...state.spaceTabs }
+          delete spaceTabs[id]
           return {
             spaces,
             activeSpaceId: state.activeSpaceId === id ? replacementId : state.activeSpaceId,
@@ -885,13 +1078,21 @@ export const useAppStore = create<AppState>()(
             noteSection,
             notes: state.notes.map((note) =>
               note.spaceId === id ? { ...note, spaceId: replacementId } : note
-            )
+            ),
+            spaceTabs
           }
         }),
       setActiveSpace: (id) =>
-        set((state) =>
-          state.spaces.some((space) => space.id === id) ? { activeSpaceId: id } : {}
-        ),
+        set((state) => {
+          if (!state.spaces.some((space) => space.id === id)) return {}
+          if (id === state.activeSpaceId) return {}
+          // Each space owns its tab bar: park the outgoing space's, then
+          // restore the incoming one (pruned against the live notes).
+          const spaceTabs = { ...state.spaceTabs, [state.activeSpaceId]: snapshotTabs(state) }
+          const restored = restoreSpaceTabs(spaceTabs[id], state.notes)
+          delete spaceTabs[id]
+          return { spaceTabs, activeSpaceId: id, ...restored }
+        }),
       moveSpace: (dragId, targetId, before) =>
         set((state) => {
           if (dragId === targetId) return {}
@@ -1358,11 +1559,11 @@ export const useAppStore = create<AppState>()(
           return { noteSection }
         }),
       setRenamingNoteId: (renamingNoteId) => set({ renamingNoteId }),
-      toggleFavorite: (noteId) =>
+      toggleBookmark: (noteId) =>
         set((state) => ({
-          favorites: state.favorites.includes(noteId)
-            ? state.favorites.filter((id) => id !== noteId)
-            : [...state.favorites, noteId]
+          bookmarks: state.bookmarks.includes(noteId)
+            ? state.bookmarks.filter((id) => id !== noteId)
+            : [...state.bookmarks, noteId]
         })),
       setImageSide: (noteId, src, side) =>
         set((state) => ({
@@ -1557,13 +1758,13 @@ export const useAppStore = create<AppState>()(
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, keep),
             noteSection,
-            favorites: state.favorites.filter((fav) => !ids.has(fav)),
+            bookmarks: state.bookmarks.filter((id) => !ids.has(id)),
             tabGroup: pruneTabGroupMap(state.tabGroup, keep)
           }
         })
       },
       destroyNote: (id) => {
-        // Permanent: drops the record, order/section/favorite slots, and tabs.
+        // Permanent: drops the record, order/section/bookmark slots, and tabs.
         const removed = get().notes.find((n) => n.id === id)
         if (!removed) return
         const removeFile = Boolean(removed.fileName && get().vaultReady)
@@ -1593,7 +1794,7 @@ export const useAppStore = create<AppState>()(
             tabRecency: state.tabRecency.filter((t) => kept.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, kept),
             noteSection,
-            favorites: state.favorites.filter((fav) => fav !== id),
+            bookmarks: state.bookmarks.filter((bookmarkedId) => bookmarkedId !== id),
             tabGroup: pruneTabGroupMap(state.tabGroup, kept)
           }
         })
@@ -2149,11 +2350,12 @@ export const useAppStore = create<AppState>()(
         noteOrder: state.noteOrder,
         noteSections: state.noteSections,
         noteSection: state.noteSection,
-        favorites: state.favorites,
+        bookmarks: state.bookmarks,
         imageLayout: state.imageLayout,
         tabGroups: state.tabGroups,
         tabGroup: state.tabGroup,
         collapsedTabGroups: state.collapsedTabGroups,
+        spaceTabs: state.spaceTabs,
         tabs: state.tabs,
         activeTabId: state.activeTabId,
         activeNav: state.activeNav,
@@ -2215,11 +2417,12 @@ export const useAppStore = create<AppState>()(
             | 'noteOrder'
             | 'noteSections'
             | 'noteSection'
-            | 'favorites'
+            | 'bookmarks'
             | 'imageLayout'
             | 'tabGroups'
             | 'tabGroup'
             | 'collapsedTabGroups'
+            | 'spaceTabs'
             | 'tabs'
             | 'activeTabId'
             | 'activeNav'
@@ -2327,7 +2530,16 @@ export const useAppStore = create<AppState>()(
         for (const [noteId, sectionId] of Object.entries(saved.noteSection ?? {})) {
           if (noteIds.has(noteId) && sectionIds.has(sectionId)) noteSection[noteId] = sectionId
         }
-        const favorites = (saved.favorites ?? []).filter((id) => noteIds.has(id))
+        // Legacy `favorites` key migrates to `bookmarks` on first load.
+        const legacyFavorites: unknown = (saved as { favorites?: unknown }).favorites
+        const bookmarkSource: unknown[] = Array.isArray(saved.bookmarks)
+          ? saved.bookmarks
+          : Array.isArray(legacyFavorites)
+            ? legacyFavorites
+            : []
+        const bookmarks = bookmarkSource
+          .filter((id): id is string => typeof id === 'string')
+          .filter((id) => noteIds.has(id))
         const imageLayout: Record<string, Record<string, ImageLayout>> = {}
         for (const [noteId, inner] of Object.entries(saved.imageLayout ?? {})) {
           if (!noteIds.has(noteId) || typeof inner !== 'object' || inner === null) continue
@@ -2357,6 +2569,7 @@ export const useAppStore = create<AppState>()(
           if (tabIds.has(tabId) && groupIds.has(groupId)) tabGroup[tabId] = groupId
         }
         const collapsedTabGroups = (saved.collapsedTabGroups ?? []).filter((id) => groupIds.has(id))
+        const spaceTabs = sanitizeSpaceTabs(saved.spaceTabs, notes)
         // Never pop the bubble for history that predates this launch: seed
         // "seen" at the newest restored SeeMO message.
         let lastSeenAgentId = saved.lastSeenAgentId ?? null
@@ -2373,11 +2586,12 @@ export const useAppStore = create<AppState>()(
           noteOrder,
           noteSections,
           noteSection,
-          favorites,
+          bookmarks,
           imageLayout,
           tabGroups,
           tabGroup,
           collapsedTabGroups,
+          spaceTabs,
           tabs,
           activeTabId,
           activeNav: resolvedNav,

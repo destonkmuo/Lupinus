@@ -25,7 +25,7 @@ import {
   QuizIcon,
   RestoreIcon,
   SearchIcon,
-  StarIcon,
+  BookmarkIcon,
   TrashIcon,
   XIcon
 } from './icons'
@@ -61,6 +61,13 @@ const SPACE_EMOJIS = [
 
 /** Default dot color: the app's accent blue (theme-aware). */
 const SPACE_DOT_DEFAULT = 'var(--accent)'
+
+/** Horizontal swipe distance (px) that commits a space switch. */
+const SWIPE_PX = 55
+/** Quiet gap (ms) that marks the end of one swipe gesture. */
+const SWIPE_GAP_MS = 100
+/** Space-swap slide duration (ms); mirrors the CSS. */
+const SWAP_MS = 240
 
 /** "14:30" -> "2:30 PM". */
 function formatClock(hhmm: string): string {
@@ -256,8 +263,8 @@ function Sidebar(): React.JSX.Element {
   const openNoteInCurrentTab = useAppStore((state) => state.openNoteInCurrentTab)
   const openNoteNewTab = useAppStore((state) => state.openNoteNewTab)
   const updateNote = useAppStore((state) => state.updateNote)
-  const toggleFavorite = useAppStore((state) => state.toggleFavorite)
-  const favorites = useAppStore((state) => state.favorites)
+  const toggleBookmark = useAppStore((state) => state.toggleBookmark)
+  const bookmarks = useAppStore((state) => state.bookmarks)
   const setQuery = useAppStore((state) => state.setQuery)
   const createNote = useAppStore((state) => state.createNote)
   const deleteNote = useAppStore((state) => state.deleteNote)
@@ -279,6 +286,9 @@ function Sidebar(): React.JSX.Element {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  // Bookmarks render the same notes as the main tree; this separate set keeps
+  // expanding/collapsing one instance from mirroring the other.
+  const [bookmarkExpandedIds, setBookmarkExpandedIds] = useState<Set<string>>(new Set())
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -349,16 +359,29 @@ function Sidebar(): React.JSX.Element {
   const asideRef = useRef<HTMLElement>(null)
   const spaceCarouselRef = useRef<HTMLDivElement>(null)
   const spaceDragRef = useRef<string | null>(null)
-  const swipeStartRef = useRef<{ x: number; y: number } | null>(null)
-  const spaceWheelRef = useRef({ accum: 0, lockUntil: 0 })
+  const paneRef = useRef<HTMLDivElement>(null)
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+  // One swipe gesture = one switch: accumulate horizontal deltas, fire once
+  // past the threshold, then swallow the rest of the burst (trackpad momentum)
+  // until a short gap marks the next gesture.
+  const swipeRef = useRef({ accum: 0, fired: false, lastAt: 0 })
+  // The outgoing space's frozen markup, shown sliding out during a swap.
+  const [swap, setSwap] = useState<{ html: string; dir: 'next' | 'prev' } | null>(null)
   const resizeStartRef = useRef({ x: 0, width: 0 })
 
   useEffect(() => {
     if (spaces.length <= 3) return
-    const activeButton = [
-      ...(spaceCarouselRef.current?.querySelectorAll<HTMLElement>('[data-space-id]') ?? [])
-    ].find((button) => button.dataset.spaceId === activeSpaceId)
-    activeButton?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    const container = spaceCarouselRef.current
+    if (!container) return
+    const button = [...container.querySelectorAll<HTMLElement>('[data-space-id]')].find(
+      (el) => el.dataset.spaceId === activeSpaceId
+    )
+    if (!button) return
+    const strip = container.getBoundingClientRect()
+    const rect = button.getBoundingClientRect()
+    const left =
+      container.scrollLeft + (rect.left - strip.left) - (container.clientWidth - rect.width) / 2
+    container.scrollTo({ left, behavior: 'smooth' })
   }, [activeSpaceId, spaces.length])
 
   // The note row stays lit while its tab is visible: always in note view,
@@ -390,7 +413,7 @@ function Sidebar(): React.JSX.Element {
   const visibleNotes = (needle ? orderedNotes(liveNotes, noteOrder) : graph.roots).filter(
     matchesQuery
   )
-  const favoriteRoots = visibleNotes.filter((note) => favorites.includes(note.id))
+  const bookmarkRoots = visibleNotes.filter((note) => bookmarks.includes(note.id))
 
   // Trash lives in the spacebar now: whole-vault list, newest first.
   const [nowMs] = useState(() => Date.now())
@@ -412,6 +435,18 @@ function Sidebar(): React.JSX.Element {
 
   const toggleExpand = (id: string): void => {
     setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleBookmarkExpand = (id: string): void => {
+    setBookmarkExpandedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
         next.delete(id)
@@ -786,7 +821,17 @@ function Sidebar(): React.JSX.Element {
   // child pages nested beneath it. Only top-level rows are draggable; nested
   // rows are link views into the same flat order. `ancestors` guards cycles.
   // JSON study children render their app icon instead of the page icon.
-  const renderTree = (note: Note, depth: number, ancestors: string[]): React.JSX.Element => {
+  //
+  // `scope` keeps the Bookmarks mirror and the main tree as separate element
+  // instances: keys, DOM attributes, expand state, and the active highlight
+  // are all scoped so interacting with one never reproduces on the other.
+  const renderTree = (
+    note: Note,
+    depth: number,
+    ancestors: string[],
+    scope: 'tree' | 'bookmarks' = 'tree'
+  ): React.JSX.Element => {
+    const isTree = scope === 'tree'
     const studyType = parseStudyChild(splitHidden(note.content).body)?.type ?? null
     const NoteIcon =
       studyType === 'flashcards'
@@ -799,10 +844,10 @@ function Sidebar(): React.JSX.Element {
     const kids = (graph.children.get(note.id) ?? []).filter(
       (kid) => !ancestors.includes(kid.id) && matchesQuery(kid)
     )
-    const isOpen = expandedIds.has(note.id)
-    const hint = depth === 0 && dropHint?.id === note.id ? dropHint : null
+    const isOpen = (isTree ? expandedIds : bookmarkExpandedIds).has(note.id)
+    const hint = isTree && depth === 0 && dropHint?.id === note.id ? dropHint : null
     const dragAttrs =
-      depth === 0
+      isTree && depth === 0
         ? {
             draggable: true as const,
             onDragStart: (event: React.DragEvent<HTMLLIElement>): void => {
@@ -839,16 +884,17 @@ function Sidebar(): React.JSX.Element {
             }
           }
         : {}
+    const renaming = isTree && renamingNoteId === note.id
     return (
       <li
-        key={note.id}
+        key={`${scope}-${note.id}`}
         {...dragAttrs}
-        className={`sidebar__note${draggingId === note.id && depth === 0 ? ' sidebar__note--dragging' : ''}${hint ? (hint.before ? ' sidebar__note--drop-before' : ' sidebar__note--drop-after') : ''}${dropNoteId === note.id ? ' is-drop-target' : ''}`}
+        className={`sidebar__note${draggingId === note.id && isTree && depth === 0 ? ' sidebar__note--dragging' : ''}${hint ? (hint.before ? ' sidebar__note--drop-before' : ' sidebar__note--drop-after') : ''}${isTree && dropNoteId === note.id ? ' is-drop-target' : ''}`}
       >
         <div
-          data-note-row={note.id}
+          data-note-row={isTree ? note.id : undefined}
           className={`sidebar__row sidebar__row--note${
-            activeNoteId === note.id ? ' is-active' : ''
+            isTree && activeNoteId === note.id ? ' is-active' : ''
           }`}
           onContextMenu={(event) => {
             if (renamingNoteId === note.id) return
@@ -866,14 +912,14 @@ function Sidebar(): React.JSX.Element {
                   ? `Collapse ${note.title || 'Untitled'}`
                   : `Expand ${note.title || 'Untitled'}`
               }
-              onClick={() => toggleExpand(note.id)}
+              onClick={() => (isTree ? toggleExpand(note.id) : toggleBookmarkExpand(note.id))}
             >
               <ChevronDownIcon size={20} />
             </button>
           ) : (
             <span className="sidebar__twisty sidebar__twisty--spacer" aria-hidden="true" />
           )}
-          {renamingNoteId === note.id ? (
+          {renaming ? (
             <input
               className="sidebar__row-input"
               autoFocus
@@ -922,7 +968,7 @@ function Sidebar(): React.JSX.Element {
                 <PlusIcon size={15} />
               </button>
             )}
-            {renamingNoteId !== note.id && (
+            {!(isTree && renamingNoteId === note.id) && (
               <button
                 type="button"
                 className="sidebar__icon-btn sidebar__icon-btn--danger"
@@ -937,7 +983,7 @@ function Sidebar(): React.JSX.Element {
         </div>
         {kids.length > 0 && isOpen && (
           <ul className="sidebar__notes sidebar__notes--nested">
-            {kids.map((kid) => renderTree(kid, depth + 1, [...ancestors, note.id]))}
+            {kids.map((kid) => renderTree(kid, depth + 1, [...ancestors, note.id], scope))}
           </ul>
         )}
       </li>
@@ -1051,48 +1097,48 @@ function Sidebar(): React.JSX.Element {
   const notesTitle =
     activeSpace != null ? activeSpace.name.trim() || `Space ${activeSpaceNumber}` : 'Notes'
 
-  // Direction of the most recent switch, so the notes pane slides the right way.
-  const prevSpaceIndexRef = useRef(activeSpaceIndex)
-  const [spaceDir, setSpaceDir] = useState<'left' | 'right'>('right')
+  // Clear the sliding-out pane once its exit animation has run.
   useEffect(() => {
-    const prev = prevSpaceIndexRef.current
-    if (prev === activeSpaceIndex) return
-    prevSpaceIndexRef.current = activeSpaceIndex
-    setSpaceDir(activeSpaceIndex > prev ? 'right' : 'left')
-  }, [activeSpaceIndex])
+    if (!swap) return
+    const timer = window.setTimeout(() => setSwap(null), SWAP_MS + 60)
+    return () => window.clearTimeout(timer)
+  }, [swap])
 
-  // Trackpad two-finger horizontal swipe also switches spaces.
+  // Switch to a space, freezing the current pane so it can slide out.
+  const goToSpace = (id: string, dir: 'next' | 'prev'): void => {
+    if (id === activeSpaceId || !spaces.some((space) => space.id === id)) return
+    const html = paneRef.current?.innerHTML ?? ''
+    setSwap({ html, dir })
+    setActiveSpace(id)
+  }
+
+  // Step one space (dir +1 = next, -1 = previous), wrapping around.
+  const stepSpace = (step: 1 | -1): void => {
+    if (spaces.length < 2) return
+    const index = spaces.findIndex((space) => space.id === activeSpaceId)
+    if (index < 0) return
+    const next = spaces[(index + step + spaces.length) % spaces.length]
+    if (next) goToSpace(next.id, step > 0 ? 'next' : 'prev')
+  }
+
+  // Trackpad two-finger horizontal swipe.
   const onSpaceWheel = (event: React.WheelEvent<HTMLElement>): void => {
     if (spaces.length < 2) return
-    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) * 1.2) return
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
     const target = event.target as HTMLElement
-    if (
-      target.closest(
-        'input, textarea, [contenteditable="true"], pre, .sidebar__space-icons, .tabbar__list'
-      )
-    ) {
-      return
+    if (target.closest('input, textarea, [contenteditable="true"], pre, .tabbar__list')) return
+    const now = event.timeStamp
+    const gesture = swipeRef.current
+    if (now - gesture.lastAt > SWIPE_GAP_MS) {
+      gesture.accum = 0
+      gesture.fired = false
     }
-    const now = performance.now()
-    const wheel = spaceWheelRef.current
-    // Swallow the rest of the gesture (including trackpad momentum) so one
-    // swipe only ever switches a single space. The lock extends while events
-    // keep arriving and releases shortly after they stop — otherwise momentum
-    // outlives the fixed lock and fires a second switch that lands back on
-    // the space you just left.
-    if (now < wheel.lockUntil) {
-      wheel.lockUntil = now + 500
-      return
-    }
-    if (Math.sign(wheel.accum) !== Math.sign(event.deltaX)) wheel.accum = 0
-    wheel.accum += event.deltaX
-    if (Math.abs(wheel.accum) < 80) return
-    const dir = wheel.accum > 0 ? 1 : -1
-    wheel.accum = 0
-    wheel.lockUntil = now + 500
-    if (activeSpaceIndex < 0) return
-    const next = spaces[(activeSpaceIndex + dir + spaces.length) % spaces.length]
-    if (next) setActiveSpace(next.id)
+    gesture.lastAt = now
+    if (gesture.fired) return
+    gesture.accum += event.deltaX
+    if (Math.abs(gesture.accum) < SWIPE_PX) return
+    gesture.fired = true
+    stepSpace(gesture.accum > 0 ? 1 : -1)
   }
 
   return (
@@ -1104,28 +1150,21 @@ function Sidebar(): React.JSX.Element {
       style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
       onWheel={onSpaceWheel}
       onTouchStart={(event) => {
-        swipeStartRef.current = null
-        const target = event.target as HTMLElement
-        if (
-          target.closest('input, textarea, [contenteditable="true"]') ||
-          (spaces.length > 3 && target.closest('.sidebar__space-icons'))
-        )
+        touchStartRef.current = null
+        if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]'))
           return
         const touch = event.touches[0]
-        swipeStartRef.current = { x: touch.clientX, y: touch.clientY }
+        touchStartRef.current = { x: touch.clientX, y: touch.clientY }
       }}
       onTouchEnd={(event) => {
-        const start = swipeStartRef.current
-        swipeStartRef.current = null
+        const start = touchStartRef.current
+        touchStartRef.current = null
         if (!start || spaces.length < 2) return
         const touch = event.changedTouches[0]
         const dx = touch.clientX - start.x
         const dy = touch.clientY - start.y
-        if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.3) return
-        const index = spaces.findIndex((space) => space.id === activeSpaceId)
-        if (index < 0) return
-        const next = spaces[(index + (dx < 0 ? 1 : spaces.length - 1)) % spaces.length]
-        if (next) setActiveSpace(next.id)
+        if (Math.abs(dx) < SWIPE_PX || Math.abs(dx) < Math.abs(dy) * 1.3) return
+        stepSpace(dx < 0 ? 1 : -1)
       }}
     >
       <div className="sidebar__top">
@@ -1204,53 +1243,65 @@ function Sidebar(): React.JSX.Element {
             </button>
           </div>
 
-          <div
-            key={activeSpaceId}
-            className={`sidebar__space-pane is-${spaceDir}${draggingId ? ' is-dragging' : ''}`}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={onPaneDrop}
-          >
-            {needle ? (
-              visibleNotes.length === 0 ? (
-                <p className="sidebar__empty">No notes match your search.</p>
-              ) : (
-                <ul
-                  className="sidebar__notes"
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={onListDrop}
-                >
-                  {visibleNotes.map((note) => renderTree(note, 0, []))}
-                </ul>
-              )
-            ) : (
-              <>
-                {favoriteRoots.length > 0 && (
-                  <div className="sidebar__section-block" aria-label="Favorites">
-                    <div className="sidebar__section-head">
-                      <span className="sidebar__section-title sidebar__fav-title">
-                        <StarIcon size={12} />
-                        Favorites
-                      </span>
-                    </div>
-                    <ul className="sidebar__notes">
-                      {favoriteRoots.map((note) => renderTree(note, 0, []))}
-                    </ul>
-                  </div>
-                )}
-                {spaceSections.map((section) => renderSection(section))}
-                {ungrouped.length === 0 && spaceSections.length === 0 ? (
-                  <p className="sidebar__empty">No notes yet — create one.</p>
+          <div className="sidebar__space-swap">
+            {swap && (
+              <div
+                className={`sidebar__space-exit is-out-${swap.dir}`}
+                aria-hidden="true"
+                dangerouslySetInnerHTML={{ __html: swap.html }}
+              />
+            )}
+            <div
+              key={activeSpaceId}
+              ref={paneRef}
+              className={`sidebar__space-pane is-in-${swap ? swap.dir : 'none'}${
+                draggingId ? ' is-dragging' : ''
+              }`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={onPaneDrop}
+            >
+              {needle ? (
+                visibleNotes.length === 0 ? (
+                  <p className="sidebar__empty">No notes match your search.</p>
                 ) : (
                   <ul
                     className="sidebar__notes"
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={onListDrop}
                   >
-                    {ungrouped.map((note) => renderTree(note, 0, []))}
+                    {visibleNotes.map((note) => renderTree(note, 0, []))}
                   </ul>
-                )}
-              </>
-            )}
+                )
+              ) : (
+                <>
+                  {bookmarkRoots.length > 0 && (
+                    <div className="sidebar__section-block" aria-label="Bookmarks">
+                      <div className="sidebar__section-head">
+                        <span className="sidebar__section-title sidebar__bookmark-title">
+                          <BookmarkIcon size={12} />
+                          Bookmarks
+                        </span>
+                      </div>
+                      <ul className="sidebar__notes">
+                        {bookmarkRoots.map((note) => renderTree(note, 0, [], 'bookmarks'))}
+                      </ul>
+                    </div>
+                  )}
+                  {spaceSections.map((section) => renderSection(section))}
+                  {ungrouped.length === 0 && spaceSections.length === 0 ? (
+                    <p className="sidebar__empty">No notes yet — create one.</p>
+                  ) : (
+                    <ul
+                      className="sidebar__notes"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={onListDrop}
+                    >
+                      {ungrouped.map((note) => renderTree(note, 0, []))}
+                    </ul>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1538,7 +1589,7 @@ function Sidebar(): React.JSX.Element {
           const target = notes.find((n) => n.id === menu.noteId)
           if (!target || target.deletedAt) return null
           const label = target.title.trim() || 'Untitled'
-          const isFav = favorites.includes(target.id)
+          const isBookmarked = bookmarks.includes(target.id)
           const isStudyChild = parseStudyChild(splitHidden(target.content).body) !== null
           return (
             <div
@@ -1580,10 +1631,10 @@ function Sidebar(): React.JSX.Element {
                 className="note-menu__item"
                 onClick={() => {
                   setMenu(null)
-                  toggleFavorite(target.id)
+                  toggleBookmark(target.id)
                 }}
               >
-                {isFav ? 'Unfavorite' : 'Favorite'}
+                {isBookmarked ? 'Remove bookmark' : 'Bookmark'}
               </button>
               {!isStudyChild && (
                 <>
@@ -1652,19 +1703,6 @@ function Sidebar(): React.JSX.Element {
           ref={spaceCarouselRef}
           role="group"
           aria-label="Spaces"
-          onScroll={(event) => {
-            if (spaces.length <= 3) return
-            const container = event.currentTarget
-            const center = container.getBoundingClientRect().left + container.clientWidth / 2
-            let closest: { id: string; distance: number } | null = null
-            for (const button of container.querySelectorAll<HTMLButtonElement>('[data-space-id]')) {
-              const rect = button.getBoundingClientRect()
-              const distance = Math.abs(rect.left + rect.width / 2 - center)
-              if (!closest || distance < closest.distance)
-                closest = { id: button.dataset.spaceId ?? '', distance }
-            }
-            if (closest?.id && closest.id !== activeSpaceId) setActiveSpace(closest.id)
-          }}
         >
           {spaces.map((space, index) => {
             const distance = Math.abs(index - activeSpaceIndex)
@@ -1680,7 +1718,7 @@ function Sidebar(): React.JSX.Element {
                 title={space.emoji.trim() ? `${space.emoji} ${space.name}` : space.name}
                 aria-label={`${space.name}${space.id === activeSpaceId ? ', current space' : ''}`}
                 aria-pressed={space.id === activeSpaceId}
-                onClick={() => setActiveSpace(space.id)}
+                onClick={() => goToSpace(space.id, index > activeSpaceIndex ? 'next' : 'prev')}
                 onDragStart={(event) => {
                   spaceDragRef.current = space.id
                   setSpaceDraggingId(space.id)
