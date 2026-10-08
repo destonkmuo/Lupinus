@@ -1,13 +1,38 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import {
+  autoFormatBlock,
   blockKind,
   blockToEditableHtml,
   editableToMarkdown,
   inlineToHtml,
+  inlineTokenAtEnd,
+  markerAtLineStart,
   type BlockKind
 } from '../richText'
+import { RULE } from '../markdown'
 import { filteredSlash, slashToken, type ChildKind, type SlashCommand } from '../slash'
 import SlashMenu from './SlashMenu'
+
+/** Block-level tags that each hold their own logical markdown line. */
+const LINE_BLOCK_TAGS = new Set([
+  'p',
+  'div',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+  'li',
+  'section',
+  'article',
+  'header',
+  'footer',
+  'table',
+  'hr',
+  'pre'
+])
 
 interface RichBlockEditorProps {
   /** Row index; used by the parent for focus lookups. */
@@ -19,6 +44,11 @@ interface RichBlockEditorProps {
   onChange: (markdown: string) => void
   /** Replace this block's markdown and open a new block below. */
   onSplit: (beforeMarkdown: string, afterMarkdown: string) => void
+  /**
+   * Replace this block with up to three: the lines before the caret's line,
+   * that line in its own format, and the lines after (empty parts dropped).
+   */
+  onSplitInto: (before: string, mid: string, after: string) => void
   /** Backspace at the very start: merge into the previous block. */
   onMergePrev: () => void
   /** Arrow at the block edge: move to the neighbouring block. */
@@ -29,7 +59,7 @@ interface RichBlockEditorProps {
   onEscape: () => void
   /** Slash child actions (new page / flashcards / …). */
   onCreateChild?: (kind: ChildKind) => string | null
-  /** Triple-click: fall back to editing this block's raw markdown. */
+  /** Shift+click: fall back to editing this block's raw markdown. */
   onRequestRaw?: () => void
   /** Where to drop the caret when the editor first mounts. */
   initialCaret?: 'start' | 'end'
@@ -142,6 +172,7 @@ function RichBlockEditor({
   placeholder,
   onChange,
   onSplit,
+  onSplitInto,
   onMergePrev,
   onNavigate,
   onMoveBlock,
@@ -196,7 +227,26 @@ function RichBlockEditor({
     const el = ref.current
     if (!el) return
     el.focus()
-    setCaretOffset(el, caretRef.current === 'start' ? 0 : (el.textContent ?? '').length)
+    // List/quote reseeds have no text node to measure against when empty, so
+    // target the item/paragraph directly; otherwise the caret would land
+    // outside the structure and typing would escape it.
+    const atStart = caretRef.current === 'start'
+    const lis = el.querySelectorAll('li')
+    const li = atStart ? lis[0] : lis[lis.length - 1]
+    const quotes = el.querySelectorAll('blockquote p')
+    const quote = atStart ? quotes[0] : quotes[quotes.length - 1]
+    const host = li ?? quote ?? el.querySelector('blockquote')
+    if (host) {
+      const target = li ? (li.querySelector('span') ?? li) : host
+      const range = document.createRange()
+      range.selectNodeContents(target)
+      range.collapse(atStart)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+    } else {
+      setCaretOffset(el, atStart ? 0 : (el.textContent ?? '').length)
+    }
     caretRef.current = 'end'
   }, [seed.key])
 
@@ -250,6 +300,118 @@ function RichBlockEditor({
     },
     [onChange]
   )
+
+  /**
+   * Live inline formatting: when a delimiter just closed right before the
+   * caret (`**bold**`, `*it*`, `` `code` ``, `~~x~~`, `==x==`, `$x$`,
+   * `[[wiki]]`, `[t](u)`, `![a](u)`), swap that run for its formatted HTML in
+   * place and keep typing after it.
+   */
+  const applyInlineFormat = useCallback((): boolean => {
+    const el = ref.current
+    if (!el) return false
+    const caret = getCaretOffset(el)
+    const token = inlineTokenAtEnd(textBeforeCaret(el))
+    if (!token) return false
+    const range = rangeAtOffsets(el, caret - token.length, caret)
+    range.deleteContents()
+    const template = document.createElement('template')
+    template.innerHTML = inlineToHtml(token)
+    const last = template.content.lastChild
+    range.insertNode(template.content)
+    const after = document.createRange()
+    if (last) after.setStartAfter(last)
+    else after.setStart(range.startContainer, range.startOffset)
+    after.collapse(true)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(after)
+    commit()
+    return true
+  }, [commit])
+
+  /**
+   * A marker typed at the start of a line in an already-typed block ends the
+   * block: the lines above stay put and the marked line starts its own block
+   * of that kind (plus any lines after it). Returns false when not applicable.
+   */
+  const applyLineMarkerSplit = useCallback((): boolean => {
+    if (seed.kind !== 'paragraph' && seed.kind !== 'quote') return false
+    const el = ref.current
+    if (!el) return false
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return false
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.startContainer)) return false
+    // Group top-level nodes into logical lines the way the markdown is
+    // serialized: block elements each start a line, runs of text/inline nodes
+    // accumulate into one.
+    const groups: Node[][] = []
+    let current: Node[] = []
+    const flush = (): void => {
+      if (current.length > 0) {
+        groups.push(current)
+        current = []
+      }
+    }
+    for (const child of Array.from(el.childNodes)) {
+      if (child instanceof HTMLElement) {
+        const tag = child.tagName.toLowerCase()
+        if (tag === 'br' || LINE_BLOCK_TAGS.has(tag)) {
+          flush()
+          groups.push([child])
+          continue
+        }
+      }
+      if (
+        child.nodeType === Node.TEXT_NODE &&
+        !(child.textContent ?? '').trim() &&
+        current.length === 0
+      ) {
+        continue
+      }
+      current.push(child)
+    }
+    flush()
+    if (groups.length < 2) return false
+    let idx = -1
+    let caretInLine = 0
+    for (let i = 0; i < groups.length; i++) {
+      let offset = 0
+      let hit = false
+      for (const node of groups[i]) {
+        if (node === range.startContainer) {
+          offset += range.startOffset
+          hit = true
+          break
+        }
+        if (node.contains(range.startContainer)) {
+          const pre = document.createRange()
+          pre.selectNodeContents(node)
+          pre.setEnd(range.startContainer, range.startOffset)
+          offset += pre.toString().length
+          hit = true
+          break
+        }
+        offset += (node.textContent ?? '').length
+      }
+      if (hit) {
+        idx = i
+        caretInLine = offset
+        break
+      }
+    }
+    if (idx < 0) return false
+    const lineText = groups[idx].map((node) => node.textContent ?? '').join('')
+    const marker = markerAtLineStart(lineText, caretInLine)
+    if (!marker || marker.kind === seed.kind) return false
+    const mdLines = editableToMarkdown(el, seed.kind).split('\n')
+    if (idx >= mdLines.length) return false
+    const before = mdLines.slice(0, idx).join('\n')
+    const after = mdLines.slice(idx + 1).join('\n')
+    onSplitInto(before, marker.markdown, after)
+    return true
+  }, [onSplitInto, seed.kind])
 
   const applySlash = useCallback(
     (cmd: SlashCommand) => {
@@ -385,10 +547,27 @@ function RichBlockEditor({
     const el = ref.current
     const sel = window.getSelection()
     if (!el || !sel || sel.rangeCount === 0) return null
-    let node: Node | null = sel.getRangeAt(0).startContainer
+    const range = sel.getRangeAt(0)
+    let node: Node | null = range.startContainer
     while (node && node !== el) {
       if (node instanceof HTMLElement && node.tagName.toLowerCase() === 'li') return node
       node = node.parentNode
+    }
+    // An empty item can leave the caret at the list boundary (between <li>s)
+    // rather than inside the <li>; map the caret offset back onto an item.
+    const anchor =
+      range.startContainer instanceof HTMLElement
+        ? range.startContainer
+        : range.startContainer.parentElement
+    const list = anchor?.closest('ul, ol')
+    if (list && el.contains(list)) {
+      const items = Array.from(list.children).filter(
+        (child): child is HTMLElement => child.tagName.toLowerCase() === 'li'
+      )
+      if (items.length > 0) {
+        const index = Math.max(0, Math.min(range.startOffset, items.length - 1))
+        return items[index]
+      }
     }
     return null
   }, [])
@@ -443,28 +622,84 @@ function RichBlockEditor({
       }
     }
 
+    const isList = seed.kind === 'bullet' || seed.kind === 'ordered' || seed.kind === 'task'
+
     if (event.key === 'Enter' && event.shiftKey) {
       event.preventDefault()
-      splitBlock(seed.kind === 'heading' ? 'paragraph' : seed.kind)
+      // Shift+Enter splits the block: headings and list items drop into a new
+      // paragraph block instead of continuing their current kind.
+      splitBlock(seed.kind === 'heading' || isList ? 'paragraph' : seed.kind)
       return
     }
 
     if (event.key === 'Enter' && !event.shiftKey) {
+      // Divider input rule: a line containing only `---` (or `***`/`___`) plus
+      // Enter turns into a divider and opens a fresh paragraph below, the way
+      // Google Docs inserts a horizontal line.
+      if (seed.kind === 'paragraph' && RULE.test(editableToMarkdown(el, seed.kind).trim())) {
+        event.preventDefault()
+        onSplit('---', '')
+        return
+      }
       if (seed.kind === 'heading') {
         event.preventDefault()
         splitBlock('paragraph')
         return
       }
-      if (seed.kind === 'bullet' || seed.kind === 'ordered' || seed.kind === 'task') {
-        const li = currentLi()
-        if (li && !(li.textContent ?? '').trim()) {
-          event.preventDefault()
+      if (isList) {
+        const lis = Array.from(el.querySelectorAll('li'))
+        const li = currentLi() ?? (lis.length === 1 ? lis[0] : null)
+        if (!li) return
+        event.preventDefault()
+        if (!(li.textContent ?? '').trim()) {
+          // Empty item: leave the list, leaving a plain line where the bullet
+          // was. The last item turns the block into an empty paragraph in
+          // place; earlier items open a fresh paragraph block below the list.
           li.remove()
-          const current =
-            el.querySelectorAll('li').length === 0 ? '' : editableToMarkdown(el, seed.kind)
-          onSplit(current, '')
+          const remaining = el.querySelectorAll('li')
+          if (remaining.length === 0) {
+            reseed('')
+          } else {
+            onSplit(editableToMarkdown(el, seed.kind), '')
+          }
           return
         }
+        // Otherwise start the next item, splitting the current one at the
+        // caret so mid-item Enter keeps the text order.
+        const sel = window.getSelection()
+        if (!sel || sel.rangeCount === 0) return
+        const range = sel.getRangeAt(0)
+        const host = seed.kind === 'task' ? (li.querySelector('span') ?? li) : li
+        const post = document.createRange()
+        post.selectNodeContents(host)
+        if (host.contains(range.startContainer)) {
+          post.setStart(range.startContainer, range.startOffset)
+        } else {
+          post.collapse(false)
+        }
+        const rest = post.extractContents()
+        const newLi = document.createElement('li')
+        if (seed.kind === 'task') {
+          newLi.className = 'markdown__task'
+          const checkbox = document.createElement('input')
+          checkbox.type = 'checkbox'
+          checkbox.setAttribute('contenteditable', 'false')
+          newLi.appendChild(checkbox)
+          const span = document.createElement('span')
+          span.appendChild(rest)
+          newLi.appendChild(span)
+        } else {
+          newLi.appendChild(rest)
+        }
+        li.after(newLi)
+        const target = seed.kind === 'task' ? (newLi.querySelector('span') ?? newLi) : newLi
+        const caret = document.createRange()
+        caret.selectNodeContents(target)
+        caret.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(caret)
+        commit()
+        return
       }
       return
     }
@@ -534,6 +769,23 @@ function RichBlockEditor({
   }
 
   const onInput = (): void => {
+    const el = ref.current
+    if (el) {
+      // Google-Docs-style input rules: a marker typed at the start of the line
+      // converts the block to that format immediately and keeps the caret live
+      // in the formatted block, so typing continues in that format.
+      const auto = autoFormatBlock(editableToMarkdown(el, seed.kind), seed.kind, getCaretOffset(el))
+      if (auto) {
+        setSlash(null)
+        reseed(auto.markdown)
+        return
+      }
+      // A marker on a later line ends the block and starts a new one.
+      if (applyLineMarkerSplit()) return
+      // Inline input rules: format `**bold**`, `*it*`, `code`, … the moment
+      // the closing delimiter is typed.
+      if (applyInlineFormat()) return
+    }
     commit()
     refreshSlash()
   }

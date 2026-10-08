@@ -7,6 +7,7 @@ import { importDroppedPicture } from '../images'
 import { LOCAL_CALENDAR_ID, expandItemDates, todayISO, type CalendarItem } from '../planner'
 import {
   SIDEBAR_DEFAULT_WIDTH,
+  TAB_GROUP_COLORS,
   TRASH_RETENTION_MS,
   clampSidebarWidth,
   useAppStore,
@@ -20,7 +21,6 @@ import {
   ExclamationIcon,
   FileTextIcon,
   MindmapIcon,
-  MoreIcon,
   PlusIcon,
   QuizIcon,
   RestoreIcon,
@@ -58,6 +58,9 @@ const SPACE_EMOJIS = [
   '🎵',
   '✈️'
 ] as const
+
+/** Default dot color: the app's accent blue (theme-aware). */
+const SPACE_DOT_DEFAULT = 'var(--accent)'
 
 /** "14:30" -> "2:30 PM". */
 function formatClock(hhmm: string): string {
@@ -286,6 +289,7 @@ function Sidebar(): React.JSX.Element {
   const [noteOverSection, setNoteOverSection] = useState<string | null>(null)
   const [dropNoteId, setDropNoteId] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ noteId: string; x: number; y: number } | null>(null)
+  const [childMenu, setChildMenu] = useState<{ noteId: string; x: number; y: number } | null>(null)
   const [spaceMenu, setSpaceMenu] = useState<{ x: number; y: number } | null>(null)
   const [spaceItemMenu, setSpaceItemMenu] = useState<{
     spaceId: string
@@ -295,7 +299,9 @@ function Sidebar(): React.JSX.Element {
   // null = creating a new space; an id = editing that space.
   const [spaceEditor, setSpaceEditor] = useState<{ spaceId: string | null } | null>(null)
   const [spaceName, setSpaceName] = useState('')
-  const [spaceEmoji, setSpaceEmoji] = useState('📁')
+  const [spaceEmoji, setSpaceEmoji] = useState('')
+  // Explicit dot color ('' = automatic). Only used in dot mode.
+  const [spaceDot, setSpaceDot] = useState('')
   const [spaceDraggingId, setSpaceDraggingId] = useState<string | null>(null)
   const [spaceDropHint, setSpaceDropHint] = useState<{ id: string; before: boolean } | null>(null)
   const [trashOpen, setTrashOpen] = useState(false)
@@ -305,16 +311,22 @@ function Sidebar(): React.JSX.Element {
     setSpaceMenu(null)
     const space = spaceId ? spaces.find((s) => s.id === spaceId) : null
     setSpaceName(space?.name ?? '')
-    setSpaceEmoji(space?.emoji ?? '📁')
+    setSpaceEmoji(space?.emoji ?? '')
+    setSpaceDot(space?.dotColor ?? '')
     setSpaceEditor({ spaceId })
   }
 
   const saveSpace = (): void => {
     if (!spaceEditor) return
-    const name = spaceName.trim() || 'New space'
-    const emoji = spaceEmoji.trim() || '📁'
-    if (spaceEditor.spaceId) updateSpace(spaceEditor.spaceId, { name, emoji })
-    else createSpace(name, emoji)
+    // Blank keeps the old name on edit; on create the store numbers it
+    // ("Space 1", "Space 2", …).
+    const name = spaceName.trim()
+    // Empty emoji = dot mode: the spacebar shows a plain dot instead.
+    // Empty dotColor = automatic color.
+    const emoji = spaceEmoji.trim()
+    const dotColor = spaceDot.trim()
+    if (spaceEditor.spaceId) updateSpace(spaceEditor.spaceId, { name, emoji, dotColor })
+    else createSpace(name, emoji, dotColor)
     setSpaceEditor(null)
   }
 
@@ -497,15 +509,32 @@ function Sidebar(): React.JSX.Element {
       .updateNote(noteId, { content: `${body}${body ? '\n\n' : ''}${blocks.join('\n\n')}\n` })
   }
 
-  const onListDrop = (event: React.DragEvent<HTMLUListElement>): void => {
-    // Only fires for empty list space; note drops stop propagation above.
-    event.preventDefault()
+  // Drop a dragged note on open space: pull it out of its section (if any)
+  // and pin it at the end of the order.
+  const ungroupDrop = (): void => {
     const dragId = dragIdRef.current
     clearDrag()
     if (dragId) {
       setNoteSection(dragId, null)
       moveNote(dragId, null, false)
     }
+  }
+
+  const onListDrop = (event: React.DragEvent<HTMLUListElement>): void => {
+    // Only fires for empty list space; note drops stop propagation above.
+    // (Stop here too so the pane catch-all below doesn't double-handle it.)
+    event.preventDefault()
+    event.stopPropagation()
+    ungroupDrop()
+  }
+
+  // Open background anywhere in the notes pane (gaps between sections and
+  // padding): rows, dividers, and lists stop propagation when they handle a
+  // drop, so reaching here means genuinely open space.
+  const onPaneDrop = (event: React.DragEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    ungroupDrop()
   }
 
   // Drop a note onto a section: file it there, pinned after that section's
@@ -617,6 +646,7 @@ function Sidebar(): React.JSX.Element {
       content: addHiddenPage(parent.content, child?.title.trim() || title)
     })
     setMenu(null)
+    setChildMenu(null)
     state.openNote(childId)
   }
 
@@ -652,10 +682,11 @@ function Sidebar(): React.JSX.Element {
 
   // Esc closes the row/space menus, the space editor, and the trash popover.
   useEffect(() => {
-    if (!menu && !spaceMenu && !spaceItemMenu && !spaceEditor && !trashOpen) return
+    if (!menu && !childMenu && !spaceMenu && !spaceItemMenu && !spaceEditor && !trashOpen) return
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         setMenu(null)
+        setChildMenu(null)
         setSpaceMenu(null)
         setSpaceItemMenu(null)
         setSpaceEditor(null)
@@ -664,7 +695,7 @@ function Sidebar(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [menu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen])
+  }, [menu, childMenu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen])
 
   const expandAll = (): void => {
     setExpandedIds(new Set(visibleNotes.map((n) => n.id)))
@@ -861,30 +892,36 @@ function Sidebar(): React.JSX.Element {
               type="button"
               className="sidebar__note-main"
               onClick={() => openNoteInCurrentTab(note.id)}
-              onDoubleClick={() => startRenameNote(note)}
-              title={
-                note.title ? `${note.title} · double-click to rename` : 'Double-click to rename'
-              }
+              title={note.title ? note.title : 'Untitled'}
             >
               <NoteIcon size={15} />
               <span className="sidebar__label">{note.title.trim() || 'Untitled'}</span>
             </button>
           )}
           <div className="sidebar__note-actions">
-            <button
-              type="button"
-              className="sidebar__icon-btn"
-              title="Note actions"
-              aria-label={`Actions for ${note.title || 'Untitled'}`}
-              aria-expanded={menu?.noteId === note.id}
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect()
-                if (menu?.noteId === note.id) setMenu(null)
-                else openMenuAt(note.id, rect.right - 170, rect.bottom + 4)
-              }}
-            >
-              <MoreIcon size={15} />
-            </button>
+            {!studyType && (
+              <button
+                type="button"
+                className="sidebar__icon-btn"
+                title="Add child"
+                aria-label={`Add child to ${note.title.trim() || 'Untitled'}`}
+                aria-expanded={childMenu?.noteId === note.id}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  if (childMenu?.noteId === note.id) {
+                    setChildMenu(null)
+                  } else {
+                    setMenu(null)
+                    setChildMenu({
+                      noteId: note.id,
+                      ...clampMenu(rect.right - 170, rect.bottom + 4, 210)
+                    })
+                  }
+                }}
+              >
+                <PlusIcon size={15} />
+              </button>
+            )}
             {renamingNoteId !== note.id && (
               <button
                 type="button"
@@ -1007,6 +1044,12 @@ function Sidebar(): React.JSX.Element {
   const spaceSections = noteSections.filter((section) => section.spaceId === activeSpaceId)
   const ungrouped = visibleNotes.filter((note) => sectionOf(note.id) === null)
   const activeSpaceIndex = spaces.findIndex((space) => space.id === activeSpaceId)
+  const activeSpace = activeSpaceIndex >= 0 ? spaces[activeSpaceIndex] : null
+  const activeSpaceNumber = activeSpaceIndex >= 0 ? activeSpaceIndex + 1 : 0
+  // The Notes header names the active space (falling back to its number when
+  // unnamed); with no spaces at all it stays "Notes".
+  const notesTitle =
+    activeSpace != null ? activeSpace.name.trim() || `Space ${activeSpaceNumber}` : 'Notes'
 
   // Direction of the most recent switch, so the notes pane slides the right way.
   const prevSpaceIndexRef = useRef(activeSpaceIndex)
@@ -1032,7 +1075,15 @@ function Sidebar(): React.JSX.Element {
     }
     const now = performance.now()
     const wheel = spaceWheelRef.current
-    if (now < wheel.lockUntil) return
+    // Swallow the rest of the gesture (including trackpad momentum) so one
+    // swipe only ever switches a single space. The lock extends while events
+    // keep arriving and releases shortly after they stop — otherwise momentum
+    // outlives the fixed lock and fires a second switch that lands back on
+    // the space you just left.
+    if (now < wheel.lockUntil) {
+      wheel.lockUntil = now + 500
+      return
+    }
     if (Math.sign(wheel.accum) !== Math.sign(event.deltaX)) wheel.accum = 0
     wheel.accum += event.deltaX
     if (Math.abs(wheel.accum) < 80) return
@@ -1078,12 +1129,16 @@ function Sidebar(): React.JSX.Element {
       }}
     >
       <div className="sidebar__top">
-        <span
-          className={`sidebar__state sidebar__state--${coreState} sidebar__status`}
-          title={`Core: ${coreState}`}
-          aria-label={`Core status: ${coreState}`}
-          role="img"
-        />
+        <div className="sidebar__statusrow">
+          <button
+            type="button"
+            key={coreState}
+            className={`sidebar__state sidebar__state--${coreState} sidebar__status`}
+            title={`Core: ${coreState} · open SeeMO`}
+            aria-label={`Core status: ${coreState} · open SeeMO`}
+            onClick={() => useAppStore.getState().openNav('agent')}
+          />
+        </div>
         <label className="sidebar__search">
           <SearchIcon size={15} />
           <input
@@ -1118,19 +1173,43 @@ function Sidebar(): React.JSX.Element {
 
         <div className="sidebar__section">
           <div className="sidebar__section-head">
-            <span className="sidebar__section-title">Notes</span>
+            {activeSpace ? (
+              <button
+                type="button"
+                className="sidebar__section-title"
+                title={`Space ${activeSpaceNumber} of ${spaces.length} — ${activeSpace.name} · double-click to rename`}
+                aria-label={`Rename space ${activeSpace.name}`}
+                onDoubleClick={() => openSpaceEditor(activeSpace.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  openSpaceEditor(activeSpace.id)
+                }}
+              >
+                {notesTitle}
+              </button>
+            ) : (
+              <span className="sidebar__section-title" title="Notes">
+                {notesTitle}
+              </span>
+            )}
             <button
               type="button"
               className="sidebar__icon-btn"
-              title="New note"
-              aria-label="New note"
+              title={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
+              aria-label={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
               onClick={() => createNote()}
             >
               <PlusIcon size={22} />
             </button>
           </div>
 
-          <div key={activeSpaceId} className={`sidebar__space-pane is-${spaceDir}`}>
+          <div
+            key={activeSpaceId}
+            className={`sidebar__space-pane is-${spaceDir}${draggingId ? ' is-dragging' : ''}`}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={onPaneDrop}
+          >
             {needle ? (
               visibleNotes.length === 0 ? (
                 <p className="sidebar__empty">No notes match your search.</p>
@@ -1176,12 +1255,13 @@ function Sidebar(): React.JSX.Element {
         </div>
       </div>
 
-      {(menu || spaceMenu || spaceItemMenu || spaceEditor || trashOpen) && (
+      {(menu || childMenu || spaceMenu || spaceItemMenu || spaceEditor || trashOpen) && (
         <div
           className="note-menu__backdrop"
           aria-hidden="true"
           onClick={() => {
             setMenu(null)
+            setChildMenu(null)
             setSpaceMenu(null)
             setSpaceItemMenu(null)
             setSpaceEditor(null)
@@ -1190,6 +1270,7 @@ function Sidebar(): React.JSX.Element {
           onContextMenu={(event) => {
             event.preventDefault()
             setMenu(null)
+            setChildMenu(null)
             setSpaceMenu(null)
             setSpaceItemMenu(null)
             setSpaceEditor(null)
@@ -1290,9 +1371,18 @@ function Sidebar(): React.JSX.Element {
           aria-label={spaceEditor.spaceId ? 'Edit space' : 'New space'}
         >
           <div className="space-editor__head">
-            <span className="space-editor__glyph" aria-hidden="true">
-              {spaceEmoji || '📁'}
-            </span>
+            {spaceEmoji.trim() ? (
+              <span className="space-editor__glyph" aria-hidden="true">
+                {spaceEmoji}
+              </span>
+            ) : (
+              <span className="space-editor__glyph space-editor__glyph--dot" aria-hidden="true">
+                <span
+                  className="space-editor__dot"
+                  style={spaceDot ? { background: spaceDot } : undefined}
+                />
+              </span>
+            )}
             <input
               className="space-editor__name"
               autoFocus
@@ -1307,6 +1397,16 @@ function Sidebar(): React.JSX.Element {
             />
           </div>
           <div className="space-editor__emojis" role="group" aria-label="Choose an emoji">
+            <button
+              type="button"
+              className={`space-editor__emoji space-editor__emoji--none${spaceEmoji.trim() === '' ? ' is-active' : ''}`}
+              aria-label="No emoji (dot)"
+              aria-pressed={spaceEmoji.trim() === ''}
+              title="No emoji — show a dot"
+              onClick={() => setSpaceEmoji('')}
+            >
+              <span className="space-editor__dot" aria-hidden="true" />
+            </button>
             {SPACE_EMOJIS.map((emoji) => (
               <button
                 key={emoji}
@@ -1323,11 +1423,37 @@ function Sidebar(): React.JSX.Element {
           <input
             className="space-editor__custom"
             value={spaceEmoji}
-            placeholder="Or type an emoji"
+            placeholder="Or type an emoji (empty for dot)"
             aria-label="Custom emoji"
             maxLength={8}
             onChange={(event) => setSpaceEmoji(event.target.value)}
           />
+          {spaceEmoji.trim() === '' && (
+            <div className="space-editor__colors" role="group" aria-label="Dot color">
+              <span className="space-editor__colors-label">Dot color</span>
+              <div className="space-editor__swatches">
+                <button
+                  type="button"
+                  className={`space-editor__swatch space-editor__swatch--auto${spaceDot === '' ? ' is-active' : ''}`}
+                  aria-label="Automatic dot color"
+                  aria-pressed={spaceDot === ''}
+                  title="Automatic"
+                  onClick={() => setSpaceDot('')}
+                />
+                {TAB_GROUP_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={`space-editor__swatch${spaceDot === color ? ' is-active' : ''}`}
+                    style={{ background: color }}
+                    aria-label={`Dot color ${color}`}
+                    aria-pressed={spaceDot === color}
+                    onClick={() => setSpaceDot(color)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           <div className="space-editor__actions">
             {spaceEditor.spaceId && (
               <button
@@ -1359,6 +1485,54 @@ function Sidebar(): React.JSX.Element {
           </div>
         </div>
       )}
+      {childMenu &&
+        (() => {
+          const target = notes.find((n) => n.id === childMenu.noteId)
+          if (!target || target.deletedAt) return null
+          return (
+            <div
+              className="note-menu note-menu--fixed"
+              role="menu"
+              aria-label={`Add child to ${target.title.trim() || 'Untitled'}`}
+              style={{ left: childMenu.x, top: childMenu.y }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <p className="tabmenu__label">Add child</p>
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => createChildFor(target.id, 'page')}
+              >
+                <FileTextIcon size={14} />
+                New page
+              </button>
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => createChildFor(target.id, 'flashcards')}
+              >
+                <CardsIcon size={14} />
+                New flashcards
+              </button>
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => createChildFor(target.id, 'mindmap')}
+              >
+                <MindmapIcon size={14} />
+                New mindmap
+              </button>
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => createChildFor(target.id, 'quiz')}
+              >
+                <QuizIcon size={14} />
+                New quiz (blank)
+              </button>
+            </div>
+          )
+        })()}
       {menu &&
         (() => {
           const target = notes.find((n) => n.id === menu.noteId)
@@ -1472,7 +1646,6 @@ function Sidebar(): React.JSX.Element {
           onClick={() => setTrashOpen((value) => !value)}
         >
           <TrashIcon size={16} />
-          {trashed.length > 0 && <span className="sidebar__trash-badge">{trashed.length}</span>}
         </button>
         <div
           className="sidebar__space-icons"
@@ -1504,7 +1677,7 @@ function Sidebar(): React.JSX.Element {
                 data-space-id={space.id}
                 draggable
                 className={`sidebar__space-icon${space.id === activeSpaceId ? ' is-active' : ''}${spaces.length > 3 ? ` is-distance-${Math.min(circularDistance, 3)}` : ''}${spaceDraggingId === space.id ? ' is-dragging' : ''}${spaceDropHint?.id === space.id ? (spaceDropHint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
-                title={`${space.emoji} ${space.name}`}
+                title={space.emoji.trim() ? `${space.emoji} ${space.name}` : space.name}
                 aria-label={`${space.name}${space.id === activeSpaceId ? ', current space' : ''}`}
                 aria-pressed={space.id === activeSpaceId}
                 onClick={() => setActiveSpace(space.id)}
@@ -1556,7 +1729,15 @@ function Sidebar(): React.JSX.Element {
                   })
                 }}
               >
-                <span aria-hidden="true">{space.emoji}</span>
+                {space.emoji.trim() ? (
+                  <span aria-hidden="true">{space.emoji}</span>
+                ) : (
+                  <span
+                    className="sidebar__space-dot"
+                    style={{ background: space.dotColor || SPACE_DOT_DEFAULT }}
+                    aria-hidden="true"
+                  />
+                )}
               </button>
             )
           })}

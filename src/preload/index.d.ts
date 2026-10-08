@@ -11,6 +11,8 @@ interface VoiceApi {
   setOrbEnabled: (enabled: boolean) => void
   speak: (text: string) => Promise<boolean>
   importAlarmSound: () => Promise<{ name: string; url: string } | null>
+  maxAlarmVolume: () => Promise<{ ok: boolean; error?: string }>
+  restoreAlarmVolume: () => Promise<{ ok: boolean; error?: string }>
   fetchIcs: (url: string) => Promise<string>
 }
 

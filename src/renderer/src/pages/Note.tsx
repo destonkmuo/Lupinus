@@ -12,7 +12,7 @@ import {
   type ImageSide
 } from '../images'
 
-import { FileTextIcon, TrashIcon, CardsIcon, MindmapIcon, QuizIcon } from '../components/icons'
+import { FileTextIcon, CardsIcon, MindmapIcon, QuizIcon, MoreIcon } from '../components/icons'
 import { useAppStore, type ImageLayout } from '../store/appStore'
 
 /** Stable empty layout so memo deps don't churn. */
@@ -39,6 +39,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   const dropStatusTimer = useRef<number | null>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [pageMenu, setPageMenu] = useState<{ x: number; y: number } | null>(null)
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null)
   const noteRef = useRef<HTMLElement>(null)
 
   // Ctrl/Cmd+F opens find-in-note. preventDefault stops the (absent) native
@@ -100,15 +101,18 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   // right-click → Add appends `[[links]]` to the footer instead of the body.
   const body = useMemo(() => splitHidden(note?.content ?? '').body, [note?.content])
 
-  // Esc closes the page menu.
+  // Esc closes the page menu and the header options menu.
   useEffect(() => {
-    if (!pageMenu) return
+    if (!pageMenu && !headerMenu) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setPageMenu(null)
+      if (event.key === 'Escape') {
+        setPageMenu(null)
+        setHeaderMenu(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pageMenu])
+  }, [pageMenu, headerMenu])
 
   /** Create an individual child of this note (page or JSON study set). */
   const createChild = (kind: ChildKind): { id: string; title: string } | null => {
@@ -352,22 +356,113 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         <div className="note__actions">
           <button
             type="button"
-            className="icon-btn icon-btn--danger"
-            title="Delete note"
-            aria-label="Delete note"
-            onClick={() => {
-              const label = note.title.trim() || 'Untitled'
-              if (
-                window.confirm(`Delete "${label}"? You can restore it from Trash within 30 days.`)
-              ) {
-                deleteNote(note.id)
+            className="icon-btn"
+            title="Note options"
+            aria-label="Note options"
+            aria-haspopup="menu"
+            aria-expanded={headerMenu !== null}
+            onClick={(event) => {
+              if (headerMenu) {
+                setHeaderMenu(null)
+              } else {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setHeaderMenu({
+                  x: Math.max(8, Math.min(rect.right - 170, window.innerWidth - 180)),
+                  y: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 280))
+                })
               }
             }}
           >
-            <TrashIcon size={15} />
+            <MoreIcon size={15} />
           </button>
         </div>
       </header>
+
+      {headerMenu && (
+        <>
+          <div
+            className="note-menu__backdrop"
+            aria-hidden="true"
+            onClick={() => setHeaderMenu(null)}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              setHeaderMenu(null)
+            }}
+          />
+          <div
+            className="note-menu note-menu--fixed"
+            role="menu"
+            aria-label="Note options"
+            style={{ left: headerMenu.x, top: headerMenu.y }}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            {!studyChild && (
+              <>
+                <p className="tabmenu__label">Add child</p>
+                <button
+                  type="button"
+                  className="note-menu__item"
+                  onClick={() => {
+                    setHeaderMenu(null)
+                    addSubpage()
+                  }}
+                >
+                  <FileTextIcon size={14} />
+                  New page
+                </button>
+                <button
+                  type="button"
+                  className="note-menu__item"
+                  onClick={() => {
+                    setHeaderMenu(null)
+                    addStudyApp('flashcards')
+                  }}
+                >
+                  <CardsIcon size={14} />
+                  New flashcards
+                </button>
+                <button
+                  type="button"
+                  className="note-menu__item"
+                  onClick={() => {
+                    setHeaderMenu(null)
+                    addStudyApp('mindmap')
+                  }}
+                >
+                  <MindmapIcon size={14} />
+                  New mindmap
+                </button>
+                <button
+                  type="button"
+                  className="note-menu__item"
+                  onClick={() => {
+                    setHeaderMenu(null)
+                    addStudyApp('quiz')
+                  }}
+                >
+                  <QuizIcon size={14} />
+                  New quiz (blank)
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              className="note-menu__item note-menu__item--danger"
+              onClick={() => {
+                setHeaderMenu(null)
+                const label = note.title.trim() || 'Untitled'
+                if (
+                  window.confirm(`Delete "${label}"? You can restore it from Trash within 30 days.`)
+                ) {
+                  deleteNote(note.id)
+                }
+              }}
+            >
+              Delete note
+            </button>
+          </div>
+        </>
+      )}
 
       {dropStatus && (
         <p className={`note__drop-status${dropStatus.error ? ' is-error' : ''}`} role="status">

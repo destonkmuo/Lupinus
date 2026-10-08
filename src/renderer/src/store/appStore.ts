@@ -52,6 +52,8 @@ export interface NoteSpace {
   id: string
   name: string
   emoji: string
+  /** Explicit dot color for dot-mode spaces; missing/empty = automatic. */
+  dotColor?: string
 }
 
 /** Trash auto-destroys notes 30 days after they were trashed. */
@@ -123,6 +125,8 @@ export interface AlarmItem {
   repeatMin: number
   /** Last fire/repeat timestamp (drives the interval). */
   lastRepeatAt: number
+  /** Crank the OS volume to max while ringing, then put it back. */
+  maxVolume: boolean
 }
 
 /** One countdown timer. Progress derives from `endsAt` while running. Kind
@@ -162,8 +166,8 @@ interface AppState {
   coreState: CoreState
   spaces: NoteSpace[]
   activeSpaceId: string
-  createSpace: (name: string, emoji: string) => string
-  updateSpace: (id: string, patch: Partial<Pick<NoteSpace, 'name' | 'emoji'>>) => void
+  createSpace: (name: string, emoji: string, dotColor?: string) => string
+  updateSpace: (id: string, patch: Partial<Pick<NoteSpace, 'name' | 'emoji' | 'dotColor'>>) => void
   deleteSpace: (id: string) => void
   setActiveSpace: (id: string) => void
   moveSpace: (dragId: string, targetId: string | null, before: boolean) => void
@@ -511,7 +515,8 @@ function restoreAlarms(saved: SavedClocks): AlarmItem[] {
         quietUntil: 0,
         repeat: item.repeat === true,
         repeatMin,
-        lastRepeatAt: 0
+        lastRepeatAt: 0,
+        maxVolume: item.maxVolume === true
       })
     }
   }
@@ -527,7 +532,8 @@ function restoreAlarms(saved: SavedClocks): AlarmItem[] {
       quietUntil: 0,
       repeat: false,
       repeatMin: 5,
-      lastRepeatAt: 0
+      lastRepeatAt: 0,
+      maxVolume: false
     })
   }
   return out
@@ -817,18 +823,32 @@ export const useAppStore = create<AppState>()(
           return latest ? { lastSeenAgentId: latest } : {}
         }),
       setQuery: (query) => set({ query }),
-      createSpace: (name, emoji) => {
+      createSpace: (name, emoji, dotColor = '') => {
         const id = uid()
-        set((state) => ({
-          spaces: [
-            ...state.spaces,
-            { id, name: name.trim() || 'New space', emoji: emoji.trim() || '📁' }
-          ],
-          activeSpaceId: id,
-          // Adopt notes left space-less (e.g. after deleting the last space)
-          // so they reappear here instead of being stranded.
-          notes: state.notes.map((note) => (note.spaceId ? note : { ...note, spaceId: id }))
-        }))
+        set((state) => {
+          // Blank names become "Space 1", "Space 2", … — smallest free number
+          // so deleted spaces free their slot instead of the count drifting.
+          const taken = new Set(state.spaces.map((s) => s.name.trim()))
+          let n = 1
+          while (taken.has(`Space ${n}`)) n += 1
+          return {
+            spaces: [
+              // An empty emoji means "dot mode": the spacebar shows a plain dot.
+              ...state.spaces,
+              {
+                id,
+                name: name.trim() || `Space ${n}`,
+                emoji: emoji.trim(),
+                // '' = automatic dot color.
+                dotColor: dotColor.trim()
+              }
+            ],
+            activeSpaceId: id,
+            // Adopt notes left space-less (e.g. after deleting the last space)
+            // so they reappear here instead of being stranded.
+            notes: state.notes.map((note) => (note.spaceId ? note : { ...note, spaceId: id }))
+          }
+        })
         return id
       },
       updateSpace: (id, patch) =>
@@ -838,7 +858,8 @@ export const useAppStore = create<AppState>()(
               ? {
                   ...space,
                   ...(patch.name !== undefined ? { name: patch.name.trim() || space.name } : {}),
-                  ...(patch.emoji !== undefined ? { emoji: patch.emoji.trim() || space.emoji } : {})
+                  ...(patch.emoji !== undefined ? { emoji: patch.emoji.trim() } : {}),
+                  ...(patch.dotColor !== undefined ? { dotColor: patch.dotColor.trim() } : {})
                 }
               : space
           )
@@ -939,7 +960,8 @@ export const useAppStore = create<AppState>()(
               quietUntil: 0,
               repeat: false,
               repeatMin: 5,
-              lastRepeatAt: 0
+              lastRepeatAt: 0,
+              maxVolume: false
             }
           ]
         }))
@@ -2225,17 +2247,22 @@ export const useAppStore = create<AppState>()(
             | 'customAlarm'
           >
         >
-        const spaces = (saved.spaces ?? []).filter(
-          (space) =>
-            space &&
-            typeof space.id === 'string' &&
-            typeof space.name === 'string' &&
-            typeof space.emoji === 'string'
-        )
+        const spaces = (saved.spaces ?? [])
+          .filter(
+            (space) =>
+              space &&
+              typeof space.id === 'string' &&
+              typeof space.name === 'string' &&
+              typeof space.emoji === 'string'
+          )
+          .map((space) => ({
+            ...space,
+            dotColor: typeof space.dotColor === 'string' ? space.dotColor.trim() : ''
+          }))
         // A brand-new install starts with one space; an intentionally emptied
         // one (persisted as []) stays at zero.
         if (persisted == null && spaces.length === 0) {
-          spaces.push({ id: 'default', name: 'Personal', emoji: '📝' })
+          spaces.push({ id: 'default', name: 'Personal', emoji: '📝', dotColor: '' })
         }
         const activeSpaceId = spaces.some((space) => space.id === saved.activeSpaceId)
           ? saved.activeSpaceId!

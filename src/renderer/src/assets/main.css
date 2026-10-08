@@ -481,16 +481,29 @@ body {
 
 .sidebar__top {
   position: relative;
-  /* Reserve a slim band up top for the core status dot. */
-  padding: 30px 10px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 10px 2px;
 }
 
-/* Core status: pinned to the sidebar's top-right corner. */
-.sidebar__status {
-  position: absolute;
-  top: 12px;
-  right: 14px;
-  animation: today-count-pop 240ms ease;
+/* Core status band: its own slim row above the search, sharing the traffic
+   lights' horizontal band, bubble pinned to the sidebar's right edge. */
+.sidebar__statusrow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 24px;
+  padding-right: 4px;
+}
+
+/* Core status bubble. Replays the switch pop on every state change (the dot
+   remounts via key={coreState}). */
+.sidebar__state.sidebar__status {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  animation: core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar__spacebar {
@@ -547,6 +560,14 @@ body {
 .sidebar__space-icon > span {
   display: block;
   line-height: 1;
+}
+
+/* Dot-mode space: plain dot, colored per space so dot-spaces stay distinct. */
+.sidebar__space-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
 }
 
 .sidebar__space-icon:hover {
@@ -645,22 +666,6 @@ body {
 .sidebar__trash-btn.is-active {
   background: rgba(var(--ink), 0.08);
   color: var(--ev-c-text-1);
-}
-
-.sidebar__trash-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #101418;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 15px;
-  text-align: center;
 }
 
 /* Notes pane slides/fades in the direction of the last space switch. */
@@ -782,6 +787,66 @@ body {
 .space-editor__emoji.is-active {
   background: rgba(106, 176, 255, 0.18);
   border-color: rgba(106, 176, 255, 0.5);
+}
+
+/* "No emoji" option: a plain dot swatch. */
+.space-editor__emoji--none {
+  display: grid;
+  place-items: center;
+}
+
+.space-editor__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ev-c-text-2);
+  flex: none;
+}
+
+/* Dot-color picker (dot mode only). */
+.space-editor__colors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.space-editor__colors-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ev-c-text-3);
+}
+
+.space-editor__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.space-editor__swatch {
+  width: 22px;
+  height: 22px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  padding: 0;
+  background: rgba(var(--ink), 0.08);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.space-editor__swatch:hover {
+  transform: scale(1.12);
+}
+
+.space-editor__swatch.is-active {
+  border-color: #fff;
+}
+
+.space-editor__swatch--auto {
+  background: var(--accent);
 }
 
 .space-editor__custom {
@@ -987,7 +1052,7 @@ body {
 }
 
 .sidebar__section {
-  margin-top: 18px;
+  margin-top: 10px;
 }
 
 .sidebar__section-head {
@@ -995,6 +1060,11 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 8px 4px;
+}
+
+/* Tighter vertical spacing for the Notes header (+ button). */
+.sidebar__section > .sidebar__section-head {
+  padding: 0 8px 0;
 }
 
 /* Larger hit area for the Notes header actions (graph / new note). */
@@ -1055,12 +1125,13 @@ body {
 
 .sidebar__events {
   /* Left inset matches the search field above (scroll pad 6px + 4px) so the
-     Today card lines up edge-to-edge with the search bar. */
-  margin: 4px 0 8px 4px;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.025);
+     Today card lines up edge-to-edge with the search bar. Same flat fill as
+     the search field so the two read as one unit. */
+  margin: 6px 0 10px 4px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: rgba(var(--ink), 0.05);
 }
 
 @keyframes today-row-in {
@@ -1133,7 +1204,7 @@ body {
 /* "Today" rows: flat list lines — hover washes the row instead of a
    bordered card popping in, which read as visual noise. */
 .sidebar__today-head {
-  padding: 0 4px 6px;
+  padding: 2px 4px 8px;
 }
 
 /* Collapsed: drop the header's bottom padding so it doesn't stack with the
@@ -1145,53 +1216,65 @@ body {
 .sidebar__today-head .sidebar__section-head--toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   width: auto;
   flex: 1;
   min-width: 0;
+  padding: 1px 0;
 }
 
+/* Today's label reads as a real heading, not just a micro-label. */
+.sidebar__events .sidebar__section-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ev-c-text-2);
+}
+
+/* Count pill keeps its blue pop against the flat card. */
 .sidebar__today-count {
   min-width: 20px;
-  padding: 1px 7px;
-  border-radius: 20px;
+  padding: 1px 8px;
+  border-radius: 999px;
   background: var(--accent);
-  color: #101418;
-  font-size: 11px;
-  font-weight: 700;
+  color: #0b0e12;
+  font-size: 10.5px;
+  font-weight: 600;
   text-align: center;
   animation: today-count-pop 240ms ease;
 }
 
 .sidebar__today-group {
-  margin: 6px 2px 3px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  margin: 10px 4px 5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ev-c-text-3);
 }
 
 .sidebar__today-group:first-of-type {
-  margin-top: 0;
+  margin-top: 2px;
 }
 
 .sidebar__today-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  margin-top: 1px;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
+  margin-top: 2px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: rgba(var(--ink), 0.02);
   color: var(--ev-c-text-2);
   font: inherit;
   font-size: 12.5px;
   text-align: left;
   transition:
     background-color 160ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 160ms ease,
     color 160ms ease,
     transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -1200,9 +1283,12 @@ button.sidebar__today-row {
   cursor: pointer;
 }
 
-button.sidebar__today-row:hover {
-  background: rgba(var(--ink), 0.06);
+button.sidebar__today-row:hover,
+div.sidebar__today-row:hover {
+  background: rgba(var(--ink), 0.07);
+  border-color: rgba(var(--ink), 0.08);
   color: var(--ev-c-text-1);
+  transform: translateX(1px);
 }
 
 /* Dismissable event rows: the label opens the calendar, × hides the row. */
@@ -1211,7 +1297,7 @@ button.sidebar__today-row:hover {
   flex: 1;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   border: none;
   background: transparent;
   color: inherit;
@@ -1221,9 +1307,12 @@ button.sidebar__today-row:hover {
   cursor: pointer;
 }
 
-div.sidebar__today-row:hover {
-  background: rgba(var(--ink), 0.06);
-  color: var(--ev-c-text-1);
+.sidebar__today-row .sidebar__label {
+  font-weight: 400;
+}
+
+.sidebar__today-row .sidebar__label strong {
+  font-weight: 500;
 }
 
 .sidebar__today-hide {
@@ -1242,17 +1331,25 @@ div.sidebar__today-row:hover .sidebar__today-hide,
 }
 
 .sidebar__today-hidden {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
   border: none;
+  border-radius: 8px;
   background: transparent;
   color: var(--ev-c-text-3);
   font: inherit;
-  font-size: 11.5px;
-  padding: 4px 8px;
+  font-size: 11px;
   cursor: pointer;
-  text-align: left;
+  text-align: center;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .sidebar__today-hidden:hover {
+  background: rgba(var(--ink), 0.05);
   color: var(--ev-c-text-1);
 }
 
@@ -1261,21 +1358,59 @@ div.sidebar__today-row:hover .sidebar__today-hide,
   height: 8px;
   flex: none;
   border-radius: 50%;
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 0 3px rgba(var(--ink), 0.06);
 }
 
 .sidebar__today-time {
   flex: none;
-  min-width: 62px;
-  font-size: 11.5px;
+  min-width: 58px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: rgba(var(--ink), 0.06);
+  font-size: 10.5px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
+  text-align: center;
   color: var(--ev-c-text-3);
 }
 
 .sidebar__today-check {
   flex: none;
-  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.5px solid rgba(var(--ink), 0.3);
+  border-radius: 5px;
+  background: transparent;
   cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.sidebar__today-check:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(106, 176, 255, 0.18);
+}
+
+.sidebar__today-check:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(106, 176, 255, 0.32);
+}
+
+.sidebar__today-check:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.sidebar__events .sidebar__empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  text-align: center;
 }
 
 .sidebar__today-overdue {
@@ -1338,6 +1473,26 @@ div.sidebar__today-row:hover .sidebar__today-hide,
   color: var(--ev-c-text-3);
 }
 
+/* The Notes header title is a button (double-click / right-click to rename the
+   space). Typography is spelled out (not `font: inherit`, which would clobber
+   the micro-label sizing) so it reads exactly like the old span. */
+button.sidebar__section-title {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ev-c-text-3);
+  text-align: left;
+  cursor: pointer;
+}
+
+button.sidebar__section-title:hover {
+  color: var(--ev-c-text-1);
+}
+
 .sidebar__icon-btn {
   display: flex;
   align-items: center;
@@ -1386,6 +1541,17 @@ div.sidebar__today-row:hover .sidebar__today-hide,
   margin-left: 11px;
   padding-left: 4px;
   border-left: 1px solid rgba(var(--ink), 0.07);
+}
+
+/* While a note is dragged, the pane grows a faint wash at its open bottom edge
+   so dropping outside any section reads as ungrouping — no explicit target. */
+.sidebar__space-pane.is-dragging::after {
+  content: '';
+  display: block;
+  height: 44px;
+  margin: 6px 2px 2px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, transparent 0%, rgba(106, 176, 255, 0.06) 100%);
 }
 
 /* Grouping block headers (Favorites, Trash). */
@@ -1854,14 +2020,125 @@ div.sidebar__today-row:hover .sidebar__today-hide,
   .sidebar__today-body-inner > * {
     animation: none;
   }
+  .sidebar__state,
+  .sidebar__state::after,
+  .sidebar__status {
+    animation: none !important;
+    transition: none;
+  }
 }
 
 .sidebar__state {
+  position: relative;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--ev-c-text-3);
   flex: none;
+  transition:
+    background-color 250ms ease,
+    box-shadow 250ms ease,
+    transform 200ms ease;
+}
+
+/* Expanding ripple ring, used by the speaking/summoned states. */
+.sidebar__state::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Every switch replays a pop (the dot remounts via key={coreState}). */
+.sidebar__status {
+  animation: core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* The status dot is a button that opens the SeeMO page: strip native button
+   dressing so only the dot itself paints, and signal clickability. */
+button.sidebar__status {
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+button.sidebar__status:hover {
+  transform: scale(1.25);
+}
+
+@keyframes core-switch-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.4;
+  }
+  55% {
+    transform: scale(1.4);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes core-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 4px rgba(63, 143, 255, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(63, 143, 255, 0.9);
+  }
+}
+
+@keyframes core-work {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 5px rgba(255, 157, 46, 0.6);
+  }
+  50% {
+    transform: scale(1.25);
+    box-shadow: 0 0 12px rgba(255, 157, 46, 1);
+  }
+}
+
+@keyframes core-ripple {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+@keyframes core-talk {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 8px rgba(47, 208, 224, 0.9);
+  }
+  50% {
+    transform: scale(1.3);
+    box-shadow: 0 0 14px rgba(47, 208, 224, 1);
+  }
+}
+
+@keyframes core-flash {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
 }
 
 .sidebar__state--sleep {
@@ -1870,22 +2147,46 @@ div.sidebar__today-row:hover .sidebar__today-hide,
 
 .sidebar__state--idle {
   background: #3f8fff;
+  color: #3f8fff;
   box-shadow: 0 0 6px rgba(63, 143, 255, 0.7);
+  animation:
+    core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    core-breathe 2.6s ease-in-out 320ms infinite;
 }
 
 .sidebar__state--working {
   background: #ff9d2e;
+  color: #ff9d2e;
   box-shadow: 0 0 6px rgba(255, 157, 46, 0.7);
+  animation:
+    core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    core-work 1.1s ease-in-out 320ms infinite;
 }
 
 .sidebar__state--speaking {
   background: #2fd0e0;
-  box-shadow: 0 0 6px rgba(47, 208, 224, 0.7);
+  color: #2fd0e0;
+  box-shadow: 0 0 8px rgba(47, 208, 224, 0.9);
+  animation:
+    core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    core-talk 1s ease-in-out 320ms infinite;
+}
+
+.sidebar__state--speaking::after {
+  animation: core-ripple 1.4s ease-out infinite;
 }
 
 .sidebar__state--summoned {
   background: #2fd066;
-  box-shadow: 0 0 6px rgba(47, 208, 102, 0.7);
+  color: #2fd066;
+  box-shadow: 0 0 8px rgba(47, 208, 102, 0.9);
+  animation:
+    core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    core-flash 1.6s ease-in-out 320ms infinite;
+}
+
+.sidebar__state--summoned::after {
+  animation: core-ripple 1.6s ease-out infinite;
 }
 
 /* --------------------------------------------------------------------- note */
@@ -1982,7 +2283,7 @@ div.sidebar__today-row:hover .sidebar__today-hide,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 20px;
+  padding: 5px 16px;
   border-bottom: 1px solid var(--line);
   flex: none;
 }
@@ -1996,6 +2297,11 @@ div.sidebar__today-row:hover .sidebar__today-hide,
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.note__actions .icon-btn {
+  width: 24px;
+  height: 24px;
 }
 
 .icon-btn {
@@ -2770,10 +3076,10 @@ div.sidebar__today-row:hover .sidebar__today-hide,
   overflow-y: auto;
 }
 
-/* Homepage scrolling is driven by a short JS tween (see Home.tsx) so the snap
-   is snappy and one section at a time. Positioned so section offsetTop values
-   are measured relative to this scroller; native snap is intentionally off so
-   it can't fight the tween. */
+/* Homepage scrolling magnetically settles onto section starts after each
+   gesture (see Home.tsx). No native snap and no scroll hijack — the settle
+   glide uses the browser's own smooth scrolling, so tall sections never trap.
+   Positioned so section offsetTop values are measured against this scroller. */
 .home {
   position: relative;
   overscroll-behavior-y: contain;
@@ -5525,14 +5831,6 @@ select.dlg__input {
   flex: none;
 }
 
-.is-mac .sidebar__top {
-  padding: 40px 10px 6px;
-}
-
-.is-mac .sidebar__status {
-  top: 16px;
-}
-
 .sidebar__top {
   -webkit-app-region: drag;
 }
@@ -7547,20 +7845,26 @@ div.home__today-row:hover {
   );
 }
 
-/* Today section: stronger card, darker rows/times/labels on light grounds. */
+/* Today section on light grounds: white card, softer depth, darker text. */
 :root[data-theme='light'] .sidebar__events {
   background: #ffffff;
-  border-color: rgba(0, 0, 0, 0.12);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  border-color: transparent;
+  box-shadow: 0 10px 24px -20px rgba(0, 0, 0, 0.45);
 }
 
 :root[data-theme='light'] .sidebar__today-row {
   color: var(--ev-c-text-1);
+  background: rgba(0, 0, 0, 0.015);
+}
+
+:root[data-theme='light'] .sidebar__today-row:hover {
+  background: rgba(0, 0, 0, 0.045);
+  border-color: rgba(0, 0, 0, 0.07);
 }
 
 :root[data-theme='light'] .sidebar__today-time {
+  background: rgba(0, 0, 0, 0.05);
   color: var(--ev-c-text-2);
-  font-weight: 600;
 }
 
 :root[data-theme='light'] .sidebar__today-group {
@@ -7572,12 +7876,7 @@ div.home__today-row:hover {
 }
 
 :root[data-theme='light'] .sidebar__today-check {
-  width: 14px;
-  height: 14px;
-}
-
-:root[data-theme='light'] .sidebar__today-count {
-  box-shadow: 0 1px 3px rgba(47, 111, 208, 0.5);
+  border-color: rgba(0, 0, 0, 0.28);
 }
 
 /* -------------------------------------------------------------------- rail */
@@ -7593,31 +7892,27 @@ div.home__today-row:hover {
   -webkit-app-region: no-drag;
 }
 
-/* Invisible grab strip hugging the very left edge; always live so the rail can
-   be summoned without stealing much of the sidebar. */
+/* Faint hint of the edge detection window; non-interactive so it never eats
+   clicks meant for the sidebar (summoning is tracked at the window level). */
 .rail__zone {
   position: fixed;
   top: 0;
   bottom: 0;
   left: 0;
-  /* Reaches under the bar (left: 8px) so there's no dead gap to cross. */
-  width: 9px;
+  /* Matches RAIL_EDGE_PX in Rail.tsx. */
+  width: 12px;
   background: linear-gradient(90deg, rgba(var(--ink), 0.08), transparent);
   opacity: 0.3;
   cursor: default;
-  pointer-events: auto;
+  pointer-events: none;
   transition: opacity 200ms ease;
-}
-
-.rail__zone:hover {
-  opacity: 0.8;
 }
 
 .rail__bar {
   position: fixed;
   left: 8px;
-  top: 12px;
-  bottom: 12px;
+  top: 8px;
+  bottom: 8px;
   width: 56px;
   display: flex;
   flex-direction: column;
@@ -7649,9 +7944,12 @@ div.home__today-row:hover {
     opacity 200ms ease;
 }
 
-/* Clear the macOS traffic lights, which float over the top-left corner. */
+/* macOS traffic lights float over the top-left corner: the pill starts below
+   them, aligned with the top of the sidebar search (10px pad + 24px status
+   row + 6px gap = 40px), so it never clips through the window controls. */
 .is-mac .rail__bar {
-  top: 46px;
+  top: 40px;
+  padding-top: 10px;
 }
 
 .rail__group {

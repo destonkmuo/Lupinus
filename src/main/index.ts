@@ -10,6 +10,7 @@ import { registerLockHandlers } from './lock'
 import { handleActivate, registerOrbHandlers, trackMainWindow } from './orb'
 import { registerMediaHandlers, registerMediaScheme } from './media'
 import { registerVaultHandlers } from './vault'
+import { registerVolumeHandlers } from './volume'
 import icon from '../../resources/icon.png?asset'
 
 // Alarm/timer sounds must be allowed to start from timer callbacks (no user
@@ -33,6 +34,10 @@ function createWindow(): void {
     minHeight: 520,
     show: false,
     autoHideMenuBar: true,
+    // Native backdrop behind the web content: without this Electron shows
+    // white here, which flashes as a trailing edge during live resizes
+    // before the renderer repaints. Matches the app canvas (--main-bg).
+    backgroundColor: '#202020',
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset',
@@ -105,6 +110,9 @@ app.whenReady().then(() => {
 
   // Custom alarm sounds: import picker + seemo-alarm:// streaming.
   registerAlarmHandlers()
+
+  // Alarm "max volume" option: OS-level volume max/restore.
+  registerVolumeHandlers()
 
   // Note pictures: import picker + seemo-media:// streaming.
   registerMediaHandlers()

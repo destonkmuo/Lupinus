@@ -4,7 +4,10 @@ import { useAppStore, type NavKey } from '../store/appStore'
 import { LogOutIcon, MicIcon, MicMutedIcon, SettingsIcon, SwitchUserIcon, UserIcon } from './icons'
 
 /** Rail destinations, in display order (matches the icon strip). */
-const RAIL_ORDER: NavKey[] = ['home', 'graph', 'tasks', 'calendar', 'email', 'agent', 'misc']
+const RAIL_ORDER: NavKey[] = ['home', 'calendar', 'tasks', 'email', 'graph', 'agent', 'misc']
+
+/** How close (px) the pointer must get to the left edge to summon the rail. */
+const RAIL_EDGE_PX = 12
 
 /**
  * Slim icon rail pinned to the left edge. It stays tucked off-screen until the
@@ -38,36 +41,60 @@ function Rail(): React.JSX.Element {
 
   const expanded = hovered || menu !== null
 
-  const cancelClose = (): void => {
-    if (closeTimer.current !== null) {
-      window.clearTimeout(closeTimer.current)
-      closeTimer.current = null
-    }
-  }
-
-  const holdOpen = (): void => {
-    cancelClose()
-    setHovered(true)
-  }
-
-  // Grace period so travelling from the edge strip onto the bar doesn't dismiss
-  // it mid-flight.
-  const scheduleClose = (): void => {
-    cancelClose()
-    closeTimer.current = window.setTimeout(() => setHovered(false), 140)
-  }
-
-  // Leaving the strip/bar is only a real exit when focus moves outside the
-  // whole rail (so hop from strip → bar → flyout doesn't flicker shut).
-  const onRailLeave = (event: React.MouseEvent): void => {
-    const next = event.relatedTarget as Node | null
-    if (next && railRef.current?.contains(next)) return
-    scheduleClose()
-  }
-
+  // Latest open-state for the pointer tracker, without re-subscribing.
+  const openRef = useRef(false)
   useEffect(() => {
+    openRef.current = hovered || menu !== null
+  }, [hovered, menu])
+
+  // Hover is tracked from a single window-level pointermove instead of
+  // mouseenter/mouseleave on the strip and bar. That avoids the classic bug
+  // where the bar glides out from under a stationary cursor (or slides in
+  // beneath it) without firing the matching enter/leave, which leaves the rail
+  // stuck open because no "leave" ever arrives.
+  useEffect(() => {
+    const open = (): void => {
+      if (closeTimer.current !== null) {
+        window.clearTimeout(closeTimer.current)
+        closeTimer.current = null
+      }
+      // Track open synchronously: state/effects land a frame later, and in
+      // that gap a pointermove past the edge but not yet over the sliding bar
+      // would otherwise schedule a close that fires once the cursor stops.
+      openRef.current = true
+      setHovered(true)
+    }
+    const close = (): void => {
+      if (closeTimer.current !== null) return
+      closeTimer.current = window.setTimeout(() => {
+        closeTimer.current = null
+        openRef.current = false
+        setHovered(false)
+      }, 160)
+    }
+    const onMove = (event: PointerEvent): void => {
+      const { clientX: x, clientY: y } = event
+      const el = document.elementFromPoint(x, y)
+      const insideRail = !!(el && railRef.current?.contains(el))
+      // Hot over the edge detection window, over the bar/flyout, or — while
+      // the rail is open — anywhere in the bar's resting slot so the cursor
+      // can follow the slide-in without dropping it mid-flight.
+      const hot = x <= RAIL_EDGE_PX || (openRef.current && x <= 64) || insideRail
+      if (hot) open()
+      else close()
+    }
+    window.addEventListener('pointermove', onMove)
+    const onLeaveWindow = (): void => close()
+    document.documentElement.addEventListener('mouseleave', onLeaveWindow)
+    window.addEventListener('blur', onLeaveWindow)
     return () => {
-      if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+      window.removeEventListener('pointermove', onMove)
+      document.documentElement.removeEventListener('mouseleave', onLeaveWindow)
+      window.removeEventListener('blur', onLeaveWindow)
+      if (closeTimer.current !== null) {
+        window.clearTimeout(closeTimer.current)
+        closeTimer.current = null
+      }
     }
   }, [])
 
@@ -133,19 +160,9 @@ function Rail(): React.JSX.Element {
 
   return (
     <div className="rail" ref={railRef}>
-      <div
-        className="rail__zone"
-        aria-hidden="true"
-        title="Navigation"
-        onMouseEnter={holdOpen}
-        onMouseLeave={onRailLeave}
-      />
+      <div className="rail__zone" aria-hidden="true" title="Navigation" />
 
-      <div
-        className={`rail__bar${expanded ? ' is-open' : ''}`}
-        onMouseEnter={holdOpen}
-        onMouseLeave={onRailLeave}
-      >
+      <div className={`rail__bar${expanded ? ' is-open' : ''}`}>
         <nav className="rail__group" aria-label="Primary">
           {railItems.map((item) => {
             const Icon = item.icon

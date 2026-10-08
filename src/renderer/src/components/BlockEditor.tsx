@@ -69,12 +69,20 @@ function BlockEditor({
   const [slashSel, setSlashSel] = useState(0)
   // Where a freshly mounted rich editor should drop its caret.
   const [caretHint, setCaretHint] = useState<'start' | 'end'>('end')
-  // Triple-click escape hatch: edit this block's raw markdown source instead
-  // of the formatted surface.
+  // Raw-markdown escape hatch: press-and-hold (or Shift+click) a block to edit
+  // its markdown source instead of the formatted surface.
   const [rawMode, setRawMode] = useState(false)
+  // Whether the edited block was rich when it was opened. A rich editor whose
+  // typed content becomes a divider (`---`) stays mounted so Enter can commit
+  // the rule, instead of swapping in a raw textarea mid-keystroke.
+  const [activeRich, setActiveRich] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const caretRef = useRef<number | null>(null)
   const indentCaretRef = useRef<number | null>(null)
+  // Press-and-hold (M1) on a rendered block opens its raw markdown source.
+  const longPressTimer = useRef<number | null>(null)
+  const longPressFired = useRef(false)
+  const longPressStart = useRef<{ x: number; y: number } | null>(null)
   // Staged text selection (formatting keeps the inner text selected).
   const selRef = useRef<[number, number] | null>(null)
   // Custom selection menu (right-click on selected text).
@@ -86,21 +94,57 @@ function BlockEditor({
   const bulkRef = useRef<HTMLTextAreaElement | null>(null)
   // Pre-move row rects keyed by block text, consumed once for the FLIP glide.
   const flipRef = useRef<Map<string, DOMRect[]> | null>(null)
+  // Document-level undo/redo. The rich editor is uncontrolled and its DOM is
+  // replaced on reseed, so the browser's native stack can't span blocks or
+  // survive a reseed; we snapshot block arrays instead, coalescing a typing
+  // burst into one step.
+  const historyRef = useRef<{ past: string[][]; future: string[][] }>({ past: [], future: [] })
+  const lastPushAtRef = useRef(0)
+  const blocksRef = useRef(blocks)
+
+  // Keep the latest committed blocks readable from stable callbacks.
+  useEffect(() => {
+    blocksRef.current = blocks
+  }, [blocks])
 
   // Adopt changes made elsewhere (vault refresh, note switch) unless the user
-  // is mid-edit.
+  // is mid-edit. A genuine document swap starts a fresh history; the parent's
+  // trailing-whitespace normalization (hidden-footer trimming) does not, so a
+  // stray trailing space can't wipe undo.
   useEffect(() => {
     if (active !== null || bulk !== null) return
-    if (value !== syncedRef.current) {
-      setBlocks(splitBlocks(value))
-      syncedRef.current = value
-      setSelected([])
-      anchorRef.current = null
+    if (value === syncedRef.current) return
+    const incoming = splitBlocks(value)
+    const trimLast = (bs: string[]): string[] =>
+      bs.map((b, i) => (i === bs.length - 1 ? b.trimEnd() : b))
+    const current = trimLast(blocksRef.current)
+    const next = trimLast(incoming)
+    if (current.length !== next.length || current.some((b, i) => b !== next[i])) {
+      historyRef.current = { past: [], future: [] }
+      lastPushAtRef.current = 0
     }
+    setBlocks(incoming)
+    syncedRef.current = value
+    setSelected([])
+    anchorRef.current = null
   }, [value, active, bulk])
 
   const commit = useCallback(
     (next: string[]) => {
+      const prev = blocksRef.current
+      const changed = prev.length !== next.length || prev.some((b, i) => b !== next[i])
+      if (changed) {
+        const now = Date.now()
+        const history = historyRef.current
+        // New undo step on a structural change or after a typing pause; rapid
+        // same-length edits fold into the current step.
+        if (next.length !== prev.length || now - lastPushAtRef.current > 500) {
+          history.past.push(prev.slice())
+          if (history.past.length > 200) history.past.shift()
+          history.future.length = 0
+          lastPushAtRef.current = now
+        }
+      }
       const text = joinBlocks(next)
       setBlocks(next)
       syncedRef.current = text
@@ -108,6 +152,61 @@ function BlockEditor({
     },
     [onChange]
   )
+
+  const restore = useCallback(
+    (snapshot: string[]) => {
+      const text = joinBlocks(snapshot)
+      // Undo/redo drops edit/multi-select modes: the rich editor is
+      // uncontrolled, so re-render it from the restored markdown instead of
+      // leaving a stale DOM in place.
+      setSelected([])
+      anchorRef.current = null
+      setBulk(null)
+      setActive(null)
+      setRawMode(false)
+      setBlocks(snapshot)
+      syncedRef.current = text
+      lastPushAtRef.current = 0
+      onChange(text)
+    },
+    [onChange]
+  )
+
+  const undo = useCallback(() => {
+    const history = historyRef.current
+    const prev = history.past.pop()
+    if (prev === undefined) return
+    history.future.push(blocksRef.current.slice())
+    restore(prev)
+  }, [restore])
+
+  const redo = useCallback(() => {
+    const history = historyRef.current
+    const next = history.future.pop()
+    if (next === undefined) return
+    history.past.push(blocksRef.current.slice())
+    restore(next)
+  }, [restore])
+
+  // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z (or Ctrl+Y) to redo — but only while
+  // the editor owns focus, so other inputs keep their native behaviour.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      const key = event.key.toLowerCase()
+      const isUndo = key === 'z' && !event.shiftKey
+      const isRedo = (key === 'z' && event.shiftKey) || key === 'y'
+      if (!isUndo && !isRedo) return
+      const container = containerRef.current
+      if (!container || !container.contains(document.activeElement)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (isUndo) undo()
+      else redo()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [undo, redo])
 
   const clearMulti = useCallback(() => {
     setSelected([])
@@ -155,7 +254,9 @@ function BlockEditor({
         // Land single-edit on the last touched piece for continued typing.
         window.requestAnimationFrame(() => {
           setCaretHint('end')
-          setActive(Math.min(current.from + parts.length - 1, finalBlocks.length - 1))
+          const last = Math.min(current.from + parts.length - 1, finalBlocks.length - 1)
+          setActiveRich(isRichKind(blockKind(finalBlocks[last] ?? '')))
+          setActive(last)
         })
         return null
       })
@@ -238,8 +339,27 @@ function BlockEditor({
     next[index] = before
     next.splice(index + 1, 0, after)
     commit(next)
+    setActiveRich(isRichKind(blockKind(after)))
     setCaretHint('start')
     setActive(index + 1)
+  }
+
+  /** Split this block into before / marked line / after (empty parts dropped). */
+  const splitRichInto = (index: number, before: string, mid: string, after: string): void => {
+    const parts: string[] = []
+    let midIndex = index
+    if (before !== '') {
+      parts.push(before)
+      midIndex = index + 1
+    }
+    parts.push(mid)
+    if (after !== '') parts.push(after)
+    const next = blocks.slice()
+    next.splice(index, 1, ...parts)
+    commit(next)
+    setCaretHint('start')
+    setActiveRich(isRichKind(blockKind(mid)))
+    setActive(midIndex)
   }
 
   /** Backspace at the very start of a rich block: merge into the previous. */
@@ -251,6 +371,7 @@ function BlockEditor({
     next.splice(index - 1, 2, merged)
     caretRef.current = caret
     commit(next)
+    setActiveRich(isRichKind(blockKind(merged)))
     setActive(index - 1)
   }
 
@@ -259,10 +380,12 @@ function BlockEditor({
     if (dir === 'up' && index > 0) {
       caretRef.current = (blocks[index - 1] ?? '').length
       setCaretHint('end')
+      setActiveRich(isRichKind(blockKind(blocks[index - 1] ?? '')))
       setActive(index - 1)
     } else if (dir === 'down' && index < blocks.length - 1) {
       caretRef.current = 0
       setCaretHint('start')
+      setActiveRich(isRichKind(blockKind(blocks[index + 1] ?? '')))
       setActive(index + 1)
     }
   }
@@ -496,9 +619,43 @@ function BlockEditor({
     caretRef.current = blocks[index]?.length ?? 0
     setCaretHint('end')
     setRawMode(raw)
+    setActiveRich(isRichKind(blockKind(blocks[index] ?? '')))
     setSlash(null)
     setActive(index)
   }
+
+  // Press-and-hold (M1) on a rendered block edits its raw markdown source.
+  // A quick click still opens the rich editor; dragging cancels the hold so
+  // text selection is unaffected.
+  const LONG_PRESS_MS = 350
+  const cancelLongPress = (): void => {
+    if (longPressTimer.current !== null) {
+      window.clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+    longPressStart.current = null
+  }
+  const startLongPress = (index: number, event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return
+    cancelLongPress()
+    longPressFired.current = false
+    longPressStart.current = { x: event.clientX, y: event.clientY }
+    longPressTimer.current = window.setTimeout(() => {
+      longPressTimer.current = null
+      longPressFired.current = true
+      anchorRef.current = index
+      activate(index, true)
+    }, LONG_PRESS_MS)
+  }
+  const onViewPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const start = longPressStart.current
+    if (!start || longPressTimer.current === null) return
+    if (Math.abs(event.clientX - start.x) > 6 || Math.abs(event.clientY - start.y) > 6) {
+      cancelLongPress()
+    }
+  }
+
+  useEffect(() => cancelLongPress, [])
 
   /** Row indices covered by the current native text selection, when it spans
    * more than one rendered row inside this editor. */
@@ -544,6 +701,12 @@ function BlockEditor({
    * A native drag-selection spanning rows becomes a multi-selection instead
    * of opening a single editor (which would destroy the selection). */
   const onViewClick = (event: React.MouseEvent, index: number): void => {
+    // The press-and-hold already opened raw markdown; don't re-open the rich
+    // editor on the click that follows the release.
+    if (longPressFired.current) {
+      longPressFired.current = false
+      return
+    }
     const nativeRange = nativeRowRange()
     if (nativeRange) {
       event.preventDefault()
@@ -714,6 +877,7 @@ function BlockEditor({
       next.splice(index + 1, 0, text.slice(caret))
       caretRef.current = 0
       commit(next)
+      setActiveRich(true)
       setActive(index + 1)
       return
     }
@@ -836,6 +1000,7 @@ function BlockEditor({
     commit(next)
     caretRef.current = 0
     setCaretHint('start')
+    setActiveRich(true)
     setActive(next.length - 1)
   }
 
@@ -967,7 +1132,11 @@ function BlockEditor({
                   </span>
                 )}
                 {index === active ? (
-                  isRichKind(blockKind(block)) && !rawMode ? (
+                  // A rich block that becomes a divider while typing keeps its
+                  // rich editor (activeRich) so Enter can commit the rule;
+                  // otherwise the live kind decides rich vs raw.
+                  (blockKind(block) === 'rule' ? activeRich : isRichKind(blockKind(block))) &&
+                  !rawMode ? (
                     <RichBlockEditor
                       key={`rich-${index}`}
                       index={index}
@@ -975,6 +1144,7 @@ function BlockEditor({
                       placeholder={index === 0 ? placeholder : undefined}
                       onChange={(markdown) => setBlockText(index, markdown)}
                       onSplit={(before, after) => splitRichBlock(index, before, after)}
+                      onSplitInto={(before, mid, after) => splitRichInto(index, before, mid, after)}
                       onMergePrev={() => mergeRichIntoPrev(index)}
                       onNavigate={(dir) => navigateRichBlock(index, dir)}
                       onMoveBlock={(dir) => moveRichBlock(index, dir)}
@@ -1039,8 +1209,13 @@ function BlockEditor({
                     className="block markdown"
                     role="button"
                     tabIndex={-1}
-                    title="Click to edit · Triple-click for markdown source"
+                    title="Click to edit · Hold to edit markdown source"
                     onClick={(event) => onViewClick(event, index)}
+                    onPointerDown={(event) => startLongPress(index, event)}
+                    onPointerMove={onViewPointerMove}
+                    onPointerUp={cancelLongPress}
+                    onPointerLeave={cancelLongPress}
+                    onPointerCancel={cancelLongPress}
                   >
                     {block.trim() ? (
                       <Markdown source={block} images={images} />

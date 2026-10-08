@@ -118,79 +118,100 @@ function Home(): React.JSX.Element {
 
   const scrollRef = useRef<HTMLElement | null>(null)
 
-  // The homepage locks onto one section per wheel gesture. Chromium's native
-  // snap duration isn't configurable (and feels slow), so we own the scroll:
-  // intercept the wheel and tween to the next section start quickly.
+  // The homepage magnetically settles onto section starts when a scroll
+  // finishes, instead of hijacking the wheel. Native scrolling stays free
+  // (tall sections never trap), then the browser's own smooth scrolling
+  // glides to the nearest section. A debounce covers platforms without
+  // scrollend; grabbing the wheel mid-glide hands control back to the user.
   useEffect(() => {
     const scroller = scrollRef.current
     if (!scroller) return
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
-    const DURATION = 170
-    const WHEEL_THRESHOLD = 16
-    const COOLDOWN = 120
+    let snapping = false
+    let snapTarget: number | null = null
+    let settleTimer = 0
 
-    let raf = 0
-    let animating = false
-    let acc = 0
-    let lockedUntil = 0
-
-    const targets = (): HTMLElement[] =>
-      Array.from(scroller.querySelectorAll<HTMLElement>('.home__hero, .home__inner > .reveal'))
+    const offsets = (): number[] =>
+      Array.from(scroller.querySelectorAll<HTMLElement>('.home__hero, .home__inner > .reveal')).map(
+        (el) => el.offsetTop
+      )
 
     // offsetTop is relative to the positioned .home scroller and ignores the
     // Reveal transform, so offsets stay put as sections fade in.
-    const tween = (to: number): void => {
-      const from = scroller.scrollTop
+    const glideTo = (to: number): void => {
       const max = scroller.scrollHeight - scroller.clientHeight
       const target = Math.max(0, Math.min(to, max))
-      const delta = target - from
-      if (Math.abs(delta) < 1) return
-      animating = true
-      const start = performance.now()
-      const step = (now: number): void => {
-        const t = Math.min(1, (now - start) / DURATION)
-        const eased = 1 - Math.pow(1 - t, 3)
-        scroller.scrollTop = from + delta * eased
-        if (t < 1) raf = requestAnimationFrame(step)
-        else animating = false
-      }
-      raf = requestAnimationFrame(step)
+      if (Math.abs(target - scroller.scrollTop) < 1) return
+      snapping = true
+      snapTarget = target
+      scroller.scrollTo({ top: target, behavior: 'smooth' })
     }
 
-    const onWheel = (event: WheelEvent): void => {
-      if (event.ctrlKey) return
-      event.preventDefault()
-      const now = performance.now()
-      // Swallow the rest of the gesture (including trackpad momentum) so a
-      // single flick can only ever advance one section.
-      if (animating || now < lockedUntil) {
-        lockedUntil = now + COOLDOWN
+    const settle = (): void => {
+      if (snapping) {
+        if (snapTarget !== null && Math.abs(scroller.scrollTop - snapTarget) <= 2) {
+          snapping = false
+          snapTarget = null
+        }
         return
       }
-      const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY
-      acc += delta
-      if (Math.abs(acc) < WHEEL_THRESHOLD) return
-      const dir = acc > 0 ? 1 : -1
-      acc = 0
-      const els = targets()
-      if (els.length === 0) return
+      const list = offsets()
+      if (list.length === 0) return
       const top = scroller.scrollTop
-      const offsets = els.map((el) => el.offsetTop)
-      let current = 0
-      for (let i = 0; i < offsets.length; i += 1) {
-        if (top >= offsets[i] - 4) current = i
+      const max = scroller.scrollHeight - scroller.clientHeight
+      // Parked at the very bottom: leave the footer readable instead of
+      // yanking back up to the last section.
+      if (top >= max - 4) return
+      // The strong end flips at the midpoint: up top the hero dominates, down
+      // low the bottom sections dominate. Squared bias so each end holds its
+      // half decisively instead of hovering in between.
+      const upperHalf = max <= 0 || top / max < 0.5
+      let best = 0
+      let dist = Infinity
+      for (let i = 0; i < list.length; i += 1) {
+        const d = Math.abs(list[i] - top)
+        const weight = (i + 1) * (i + 1)
+        const biased = upperHalf ? d * weight : d / weight
+        if (biased < dist) {
+          dist = biased
+          best = i
+        }
       }
-      const next = Math.max(0, Math.min(current + dir, els.length - 1))
-      lockedUntil = now + DURATION + COOLDOWN
-      if (next === current) return
-      tween(offsets[next])
+      glideTo(list[best])
     }
 
-    scroller.addEventListener('wheel', onWheel, { passive: false })
+    const scheduleSettle = (): void => {
+      window.clearTimeout(settleTimer)
+      settleTimer = window.setTimeout(() => {
+        if (!snapping) settle()
+      }, 180)
+    }
+
+    const onScrollEnd = (): void => settle()
+
+    // The user grabbed the wheel/touch mid-glide: stop our animation and let
+    // the native gesture take over. (Re-assigning the current position aborts
+    // the in-flight smooth scroll; the wheel's own delta then applies on top
+    // since we never preventDefault.)
+    const interrupt = (): void => {
+      if (!snapping) return
+      snapping = false
+      snapTarget = null
+      const current = scroller.scrollTop
+      scroller.scrollTop = current
+    }
+
+    scroller.addEventListener('scrollend', onScrollEnd)
+    scroller.addEventListener('scroll', scheduleSettle, { passive: true })
+    scroller.addEventListener('wheel', interrupt, { passive: true })
+    scroller.addEventListener('touchmove', interrupt, { passive: true })
     return () => {
-      scroller.removeEventListener('wheel', onWheel)
-      cancelAnimationFrame(raf)
+      scroller.removeEventListener('scrollend', onScrollEnd)
+      scroller.removeEventListener('scroll', scheduleSettle)
+      scroller.removeEventListener('wheel', interrupt)
+      scroller.removeEventListener('touchmove', interrupt)
+      window.clearTimeout(settleTimer)
     }
   }, [])
 

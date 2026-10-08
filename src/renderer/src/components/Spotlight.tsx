@@ -75,7 +75,7 @@ function appCommands(): Command[] {
       run: () => {
         const name = window.prompt('Name this space')
         if (name === null || !name.trim()) return
-        const emoji = window.prompt('Choose an emoji for this space', '📁')
+        const emoji = window.prompt('Choose an emoji for this space (empty for dot)', '')
         if (emoji === null) return
         api().createSpace(name, emoji)
       }

@@ -36,6 +36,20 @@ function silenceUnlessRinging(): void {
   if (!ringing) stopAlarm()
 }
 
+/** Put the OS volume back after a max-volume alarm stops ringing. */
+function restoreVolumeIfMaxed(alarm: AlarmItem): void {
+  // Optional call: tolerates a stale preload bundle (app not rebuilt) —
+  // in that case nothing was ever maxed, so there is nothing to restore.
+  if (alarm.maxVolume && alarm.ringing && window.api.restoreAlarmVolume) {
+    void window.api.restoreAlarmVolume().then(
+      (result) => {
+        if (!result.ok) console.error('[alarm] restore volume failed:', result.error)
+      },
+      (error) => console.error('[alarm] restore volume failed:', error)
+    )
+  }
+}
+
 function formatDurationDraft(totalSec: number): string {
   const minutes = Math.floor(totalSec / 60)
   const seconds = totalSec % 60
@@ -151,6 +165,7 @@ function AlarmCard({ alarm }: { alarm: AlarmItem }): React.JSX.Element {
   const setAlarmSoundId = useAppStore((state) => state.setAlarmSoundId)
 
   const stop = (): void => {
+    restoreVolumeIfMaxed(alarm)
     updateAlarm(alarm.id, {
       ringing: false,
       snoozeUntil: null,
@@ -162,12 +177,14 @@ function AlarmCard({ alarm }: { alarm: AlarmItem }): React.JSX.Element {
   const snooze = (): void => {
     const next = addMinutesHHMM(nowHHMM(), 5)
     if (!next) return
+    restoreVolumeIfMaxed(alarm)
     updateAlarm(alarm.id, { ringing: false, snoozeUntil: next })
     silenceUnlessRinging()
   }
 
   const onToggleEnabled = (enabled: boolean): void => {
     if (!enabled && alarm.ringing) {
+      restoreVolumeIfMaxed(alarm)
       updateAlarm(alarm.id, {
         enabled,
         ringing: false,
@@ -181,6 +198,7 @@ function AlarmCard({ alarm }: { alarm: AlarmItem }): React.JSX.Element {
   }
 
   const onDelete = (): void => {
+    restoreVolumeIfMaxed(alarm)
     removeAlarm(alarm.id)
     silenceUnlessRinging()
   }
@@ -225,6 +243,17 @@ function AlarmCard({ alarm }: { alarm: AlarmItem }): React.JSX.Element {
           onChange={(event) => onToggleEnabled(event.target.checked)}
         />
         Enabled
+      </label>
+      <label
+        className="settings__check"
+        title="Crank the OS volume to max while this alarm rings, then put it back."
+      >
+        <input
+          type="checkbox"
+          checked={alarm.maxVolume}
+          onChange={(event) => updateAlarm(alarm.id, { maxVolume: event.target.checked })}
+        />
+        Max system volume
       </label>
       <div className="miniapp__row">
         <label className="settings__check">
@@ -280,6 +309,9 @@ function AlarmCard({ alarm }: { alarm: AlarmItem }): React.JSX.Element {
               : `Rings daily at ${formatTime12h(alarm.time)} while the app is open.`}
           {alarm.repeat && alarm.enabled && alarm.time && (
             <> Repeats every {alarm.repeatMin} min until stopped.</>
+          )}
+          {alarm.maxVolume && alarm.enabled && alarm.time && (
+            <> Raises the OS volume to max while ringing, then restores it.</>
           )}
         </p>
       )}

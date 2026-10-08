@@ -121,6 +121,36 @@ export function inlineToHtml(text: string): string {
   return html
 }
 
+/**
+ * Live-format patterns: a complete inline token ending exactly at the caret.
+ * Ordered most-specific first (bold before italic, display math before inline,
+ * image before link) so a partial marker like `**a*` doesn't prematurely turn
+ * into italics.
+ */
+const LIVE_INLINE: RegExp[] = [
+  /`[^`\n]+`$/,
+  /\$\$[^$\n]+\$\$$/,
+  /(?<!\$)\$[^\s$](?:[^$\n]*[^\s$])?\$$/,
+  /\[\[[^\]\n]+\]\]$/,
+  /!\[[^\]\n]*\]\([^)\n]*\)$/,
+  /(?<!!)\[[^\]\n]*\]\([^)\n]*\)$/,
+  /(?<!\*)\*\*([^\n]+?)\*\*$/,
+  /(?<!_)__([^\n]+?)__$/,
+  /(?<!~)~~([^~\n]+?)~~$/,
+  /(?<!=)==([^=\n]+?)==$/,
+  /(?<!\*)\*(?!\*)([^*\n]+?)\*$/,
+  /(?<!_)_(?!_)([^_\n]+?)_$/
+]
+
+/** The complete inline markdown token ending at the end of `text`, or null. */
+export function inlineTokenAtEnd(text: string): string | null {
+  for (const re of LIVE_INLINE) {
+    const match = re.exec(text)
+    if (match) return match[0]
+  }
+  return null
+}
+
 /** One line's inline DOM → inline markdown (no block structure). */
 export function inlineFromDom(node: Node): string {
   let out = ''
@@ -323,6 +353,76 @@ export function blockToEditableHtml(block: string): string {
       if (!block.trim()) return ''
       return lines.map((line) => `<p>${inlineToHtml(line)}</p>`).join('')
   }
+}
+
+export interface AutoFormatResult {
+  /** The block rewritten in the detected format. */
+  markdown: string
+  kind: BlockKind
+}
+
+export interface MarkerMatch {
+  kind: BlockKind
+  /** The line normalized into that format. */
+  markdown: string
+  /** The text after the marker (empty when the marker was just typed). */
+  content: string
+}
+
+/**
+ * A marker typed at the very start of `line`, with the caret sitting right
+ * after it (`caretInLine === line.length - content.length`) — the moment the
+ * completing space lands. Returns null otherwise.
+ */
+export function markerAtLineStart(line: string, caretInLine: number): MarkerMatch | null {
+  const result = (markdown: string, kind: BlockKind, content: string): MarkerMatch | null => {
+    if (caretInLine !== line.length - content.length) return null
+    return { kind, markdown, content }
+  }
+
+  // Task before bullet: `- [ ] ` and bare `[ ] ` / `[] ` both become tasks.
+  const task = /^(?:[-*+]\s+)?\[([ xX]?)\]\s+(.*)$/.exec(line)
+  if (task) {
+    const checked = task[1].toLowerCase() === 'x' ? 'x' : ' '
+    return result(`- [${checked}] ${task[2]}`, 'task', task[2])
+  }
+
+  const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+  if (heading) return result(`${heading[1]} ${heading[2]}`, 'heading', heading[2])
+
+  const quote = /^>\s(.*)$/.exec(line)
+  if (quote) return result(quote[1] ? `> ${quote[1]}` : '>', 'quote', quote[1])
+
+  const bullet = /^[-*+]\s+(.*)$/.exec(line)
+  if (bullet) return result(`- ${bullet[1]}`, 'bullet', bullet[1])
+
+  const ordered = /^\d+\.\s+(.*)$/.exec(line)
+  if (ordered) return result(`1. ${ordered[1]}`, 'ordered', ordered[1])
+
+  return null
+}
+
+/**
+ * Google-Docs-style input rule. The keystroke that completes a marker at the
+ * start of the block's first line (`# `, `- `, `1. `, `> `, `[] `) — caret
+ * sitting right after it — returns the block rewritten in that format, so the
+ * editor can reseed to it immediately and keep the caret live in the formatted
+ * block. Returns null when no marker was just typed, the caret is elsewhere on
+ * the line, or the block is already that kind (its marker is structural, not
+ * literal, so re-converting would reseed on every keystroke).
+ */
+export function autoFormatBlock(
+  block: string,
+  currentKind: BlockKind,
+  caretOffset: number
+): AutoFormatResult | null {
+  const [first = '', ...rest] = block.split('\n')
+  // Only a marker typed on the first line triggers here; later lines are
+  // handled by splitting the block instead (see the editor's line splitter).
+  if (caretOffset > first.length) return null
+  const marker = markerAtLineStart(first, caretOffset)
+  if (!marker || marker.kind === currentKind) return null
+  return { markdown: [marker.markdown, ...rest].join('\n'), kind: marker.kind }
 }
 
 /** Editable HTML → markdown block. */

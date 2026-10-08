@@ -44,7 +44,9 @@ function Content({ active }: { active: NavKey }): React.JSX.Element {
 }
 
 function renderTab(tab: Tab): ReactNode {
-  return <Note key={tab.id} noteId={tab.noteId} />
+  // Key by note so reusing the active tab for a different note (sidebar clicks)
+  // remounts the editor instead of leaving the previous note's blocks on screen.
+  return <Note key={tab.noteId} noteId={tab.noteId} />
 }
 
 function SplitPaneHeader({
@@ -221,6 +223,17 @@ function App(): React.JSX.Element {
         const target = alarm.snoozeUntil ?? alarm.time
         if (target && isAlarmDue(target)) {
           startAlarmLoop(resolveSoundUrl(alarm.soundId, customUrl))
+          if (alarm.maxVolume) {
+            // Crank the OS volume so the alarm is heard; put back on stop.
+            // A failed max-out still rings at the current level. The optional
+            // call also tolerates a stale preload bundle (app not rebuilt).
+            void window.api.maxAlarmVolume?.().then(
+              (result) => {
+                if (!result.ok) console.error('[alarm] max volume failed:', result.error)
+              },
+              (error) => console.error('[alarm] max volume failed:', error)
+            )
+          }
           state.updateAlarm(alarm.id, { ringing: true, lastRepeatAt: now })
         }
       }
@@ -428,7 +441,7 @@ function App(): React.JSX.Element {
       </>
     )
   } else {
-    content = <Note key={activeTab.id} noteId={activeTab.noteId} />
+    content = renderTab(activeTab)
   }
 
   // In the main window a horizontal swipe walks page (tab) history, matching

@@ -57,6 +57,12 @@ const api = {
   speak: (text: string): Promise<boolean> => ipcRenderer.invoke('voice:speak', text),
   importAlarmSound: (): Promise<{ name: string; url: string } | null> =>
     ipcRenderer.invoke('alarm:importSound'),
+  /** Crank the OS volume to max for a ringing alarm (prior level is saved). */
+  maxAlarmVolume: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('alarm:maxVolume'),
+  /** Put back the OS volume saved by the matching maxAlarmVolume call. */
+  restoreAlarmVolume: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('alarm:restoreVolume'),
   fetchIcs: (url: string): Promise<string> => ipcRenderer.invoke('calendar:fetchIcs', url),
   lock: {
     status: () =>
