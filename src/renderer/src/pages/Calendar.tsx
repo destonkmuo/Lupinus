@@ -17,6 +17,7 @@ import {
   minutesOf,
   monthGrid,
   monthLabel,
+  normalizeTimeInput,
   parseISODate,
   todayISO,
   toISODate,
@@ -161,13 +162,16 @@ function Calendar(): React.JSX.Element {
 
     for (const task of tasks) {
       if (!task.due) continue
+      // Normalize defensively: a time written before input sanitization must
+      // degrade to untimed, never to a NaN block.
+      const taskStart = task.time ? normalizeTimeInput(task.time) : null
       push(task.due, {
         key: `task-${task.id}`,
         title: task.title || 'Untitled',
         kind: 'task',
         done: isTaskDone(task),
         color: TASK_COLOR,
-        startMin: task.time ? minutesOf(task.time) : null,
+        startMin: taskStart ? minutesOf(taskStart) : null,
         endMin: null,
         location: task.location,
         recurring: false,

@@ -109,11 +109,19 @@ export function formatElapsed(totalSeconds: number): string {
   return `${pad(minutes)}:${pad(clamped % 60)}`
 }
 
-/** `HH:MM` (24h) -> 12-hour display (`2:30 PM`). Null/invalid passes through. */
+/**
+ * `HH:MM` (24h) -> 12-hour display (`2:30 PM`). An hour-only value (`"14"`)
+ * means top of the hour. Null/invalid passes through (never "undefined").
+ */
 export function formatTime12h(time: string | null): string {
   if (time === null) return '--:--'
-  if (!isValidTimeHHMM(time)) return time
-  const [h, m] = time.split(':').map(Number)
+  let normalized = time
+  if (!isValidTimeHHMM(normalized)) {
+    const hourOnly = /^([01]?\d|2[0-3])$/.exec(normalized.trim())
+    if (!hourOnly) return time
+    normalized = `${hourOnly[1].padStart(2, '0')}:00`
+  }
+  const [h, m] = normalized.split(':').map(Number)
   const suffix = h >= 12 ? 'PM' : 'AM'
   const hour = h % 12 === 0 ? 12 : h % 12
   return `${hour}:${pad(m)} ${suffix}`

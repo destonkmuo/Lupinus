@@ -269,7 +269,7 @@ function PlannerDialog({
                 />
               </label>
               <label className="dlg__field">
-                <span className="dlg__label">End</span>
+                <span className="dlg__label">End (optional)</span>
                 <input
                   type="time"
                   className="dlg__input"

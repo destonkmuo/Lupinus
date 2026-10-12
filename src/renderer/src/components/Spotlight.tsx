@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { respondTo } from '../agentBrain'
 import { NAV_BY_KEY, NAV_ITEMS } from '../nav'
 import { useAppStore } from '../store/appStore'
+import { formatTime12h } from '../time'
 import { AgentIcon, CommandIcon, FileTextIcon, SearchIcon, TaskIcon } from './icons'
 
 /**
@@ -229,7 +230,7 @@ function Spotlight(): React.JSX.Element | null {
           id: task.id,
           title: task.title.trim() || 'Untitled',
           lines: task.due
-            ? [`Due ${task.due}${task.time ? ` · ${task.time}` : ''}`, ...lines]
+            ? [`Due ${task.due}${task.time ? ` · ${formatTime12h(task.time)}` : ''}`, ...lines]
             : lines
         })
       }

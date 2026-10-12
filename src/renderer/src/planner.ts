@@ -156,6 +156,20 @@ function asTime(value: unknown): string | null {
   return typeof value === 'string' && TIME_RE.test(value) ? value : null
 }
 
+/**
+ * Coerce loose time input to `HH:MM`, or null when it carries no usable time.
+ * An hour-only value (`"14"`) means top of the hour — this is what used to
+ * leak through as `"2: undefined PM"`.
+ */
+export function normalizeTimeInput(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (TIME_RE.test(trimmed)) return trimmed
+  const hourOnly = /^([01]?\d|2[0-3])$/.exec(trimmed)
+  if (hourOnly) return `${hourOnly[1].padStart(2, '0')}:00`
+  return null
+}
+
 function asNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
@@ -295,16 +309,21 @@ export function itemDate(item: CalendarItem): string {
   return (dateTime ?? '').slice(0, 10)
 }
 
-/** `HH:MM` start, or null for all-day items. */
+/**
+ * `HH:MM` start, or null for all-day items — and null for anything malformed,
+ * so a corrupt `dateTime` degrades to "All day" instead of `NaN` downstream.
+ */
 export function itemStartTime(item: CalendarItem): string | null {
   if (!item.start.dateTime) return null
-  return item.start.dateTime.slice(11, 16)
+  const time = item.start.dateTime.slice(11, 16)
+  return TIME_RE.test(time) ? time : null
 }
 
-/** `HH:MM` end, or null for open-ended / all-day items. */
+/** `HH:MM` end, or null for open-ended / all-day / malformed items. */
 export function itemEndTime(item: CalendarItem): string | null {
   if (!item.end || !item.end.dateTime) return null
-  return item.end.dateTime.slice(11, 16)
+  const time = item.end.dateTime.slice(11, 16)
+  return TIME_RE.test(time) ? time : null
 }
 
 /** Minutes between an item's start and end, for calendar block height. */
@@ -340,15 +359,18 @@ export function calendarItemFromDraft(
   now: number,
   existing?: Pick<CalendarItem, 'createdAt' | 'status' | 'exdates' | 'calendarId'>
 ): CalendarItem {
+  // An event needs only a start: the end stays null (open-ended) unless the
+  // user picked one. Normalizing here keeps malformed input from ever
+  // reaching the stored `dateTime` shape.
+  const startTime = normalizeTimeInput(draft.startTime)
+  const endTime = normalizeTimeInput(draft.endTime)
   return {
     id,
     summary: draft.summary,
     description: draft.description,
     location: draft.location,
-    start: draft.startTime
-      ? { dateTime: `${draft.date}T${draft.startTime}` }
-      : { date: draft.date },
-    end: draft.endTime ? { dateTime: `${draft.date}T${draft.endTime}` } : null,
+    start: startTime ? { dateTime: `${draft.date}T${startTime}` } : { date: draft.date },
+    end: endTime ? { dateTime: `${draft.date}T${endTime}` } : null,
     status: existing?.status ?? 'confirmed',
     recurrence: draft.recurrence ? [draft.recurrence] : [],
     exdates: existing?.exdates ?? [],
@@ -371,7 +393,7 @@ export function taskItemFromDraft(
     notes: draft.notes,
     location: draft.location,
     due: draft.due,
-    time: draft.time,
+    time: normalizeTimeInput(draft.time),
     status: done ? 'completed' : 'needsAction',
     createdAt: existing?.createdAt ?? now,
     updatedAt: now
@@ -404,7 +426,7 @@ export function parseCalendarData(data: unknown): CalendarLoad {
         notes: raw.description,
         location: raw.location,
         due: date,
-        time: raw.start.dateTime ? raw.start.dateTime.slice(11, 16) : null,
+        time: raw.start.dateTime ? normalizeTimeInput(raw.start.dateTime.slice(11, 16)) : null,
         status: raw.status === 'cancelled' ? 'completed' : 'needsAction',
         createdAt: raw.createdAt,
         updatedAt: raw.updatedAt
@@ -636,9 +658,15 @@ export function toTimeString(totalMinutes: number): string {
   return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`
 }
 
-/** `13:05` -> `1:05 PM`; midnight/noon handled. */
+/**
+ * `13:05` -> `1:05 PM`; midnight/noon handled. An hour-only value (`"14"`)
+ * means top of the hour; anything else unparseable passes through untouched
+ * (never `NaN` output).
+ */
 export function formatTime(time: string): string {
-  const total = minutesOf(time)
+  const normalized = normalizeTimeInput(time) ?? time
+  const total = minutesOf(normalized)
+  if (!Number.isFinite(total)) return time
   const hours24 = Math.floor(total / 60)
   const minutes = total % 60
   const suffix = hours24 < 12 ? 'AM' : 'PM'

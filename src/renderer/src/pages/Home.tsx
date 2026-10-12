@@ -12,7 +12,15 @@ import {
 import { NAV_LABELS } from '../nav'
 import Reveal from '../components/Reveal'
 import { parseWikiLinks, resolveWikiTarget } from '../notes'
-import { addDays, expandItemDates, formatDayLabel, todayISO, type CalendarItem } from '../planner'
+import {
+  addDays,
+  expandItemDates,
+  formatDayLabel,
+  itemStartTime,
+  todayISO,
+  type CalendarItem
+} from '../planner'
+import { formatTime12h } from '../time'
 import { parseStudyChild } from '../study'
 import { splitHidden } from '../subpages'
 import { useAppStore, type NavKey } from '../store/appStore'
@@ -28,15 +36,6 @@ function previewFor(content: string): string {
   }
   if (child?.type === 'quiz') return 'Quiz · blank shell'
   return body.replace(/[#*`>_~-]/g, '').slice(0, 90) || 'Empty note'
-}
-
-/** "14:30" -> "2:30 PM". */
-function formatClock(hhmm: string): string {
-  const [h, m] = hhmm.split(':').map(Number)
-  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm
-  const suffix = h >= 12 ? 'PM' : 'AM'
-  const hour = h % 12 === 0 ? 12 : h % 12
-  return `${hour}:${String(m).padStart(2, '0')} ${suffix}`
 }
 
 /** "2024-…" timestamps to a short relative label. */
@@ -260,9 +259,9 @@ function Home(): React.JSX.Element {
   const weekEnd = addDays(today, 7)
   const tomorrow = addDays(today, 1)
 
-  const eventTime = (item: { start: { dateTime?: string | null } }): string => {
-    const time = item.start.dateTime?.split('T')[1]?.slice(0, 5)
-    return time ? formatClock(time) : 'All day'
+  const eventTime = (item: CalendarItem): string => {
+    const time = itemStartTime(item)
+    return time ? formatTime12h(time) : 'All day'
   }
 
   // Upcoming events after today through the next 7 days, soonest first.
@@ -412,7 +411,7 @@ function Home(): React.JSX.Element {
                           <small>
                             {task.due !== null && task.due < today
                               ? `Overdue · due ${task.due}`
-                              : `Due today${task.time ? ` · ${formatClock(task.time)}` : ''}`}
+                              : `Due today${task.time ? ` · ${formatTime12h(task.time)}` : ''}`}
                           </small>
                         </span>
                       </button>
@@ -466,7 +465,7 @@ function Home(): React.JSX.Element {
                           <strong>{task.title.trim() || 'Untitled'}</strong>
                           <small>
                             Due {task.due ? dayLabel(task.due) : ''}
-                            {task.time ? ` · ${formatClock(task.time)}` : ''}
+                            {task.time ? ` · ${formatTime12h(task.time)}` : ''}
                           </small>
                         </span>
                       </button>

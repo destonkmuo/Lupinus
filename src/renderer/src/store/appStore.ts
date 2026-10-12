@@ -14,6 +14,7 @@ import {
   TODO_FILE,
   calendarItemFromDraft,
   draftFromItem,
+  normalizeTimeInput,
   parseCalendarData,
   parseRoutines,
   parseSubscriptions,
@@ -691,7 +692,7 @@ function restoreAlarms(saved: SavedClocks): AlarmItem[] {
           typeof item.soundId === 'string' && isKnownSoundId(item.soundId)
             ? item.soundId
             : 'classic',
-        time: typeof item.time === 'string' ? item.time : null,
+        time: typeof item.time === 'string' ? normalizeTimeInput(item.time) : null,
         enabled: item.enabled === true,
         ringing: false,
         snoozeUntil: typeof item.snoozeUntil === 'string' ? item.snoozeUntil : null,
@@ -708,7 +709,7 @@ function restoreAlarms(saved: SavedClocks): AlarmItem[] {
       id: uid(),
       label: 'Alarm',
       soundId: 'classic',
-      time: saved.alarmTime,
+      time: normalizeTimeInput(saved.alarmTime),
       enabled: saved.alarmEnabled === true,
       ringing: false,
       snoozeUntil: null,

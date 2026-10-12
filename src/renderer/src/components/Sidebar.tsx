@@ -4,7 +4,14 @@ import { buildNoteGraph, orderedNotes } from '../notes'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import { addHiddenPage, splitHidden } from '../subpages'
 import { importDroppedPicture } from '../images'
-import { LOCAL_CALENDAR_ID, expandItemDates, todayISO, type CalendarItem } from '../planner'
+import {
+  LOCAL_CALENDAR_ID,
+  expandItemDates,
+  itemStartTime,
+  todayISO,
+  type CalendarItem
+} from '../planner'
+import { formatTime12h } from '../time'
 import {
   SIDEBAR_DEFAULT_WIDTH,
   TAB_GROUP_COLORS,
@@ -32,9 +39,9 @@ import {
 
 /** "9:00 AM" from an event start (all-day events have no time part). */
 function formatEventTime(item: CalendarItem): string {
-  const time = item.start.dateTime?.split('T')[1]?.slice(0, 5)
+  const time = itemStartTime(item)
   if (!time) return 'All day'
-  return formatClock(time)
+  return formatTime12h(time)
 }
 
 /** Quick-pick emoji palette when creating or editing a space. */
@@ -68,15 +75,6 @@ const SWIPE_PX = 55
 const SWIPE_GAP_MS = 100
 /** Space-swap slide duration (ms); mirrors the CSS. */
 const SWAP_MS = 240
-
-/** "14:30" -> "2:30 PM". */
-function formatClock(hhmm: string): string {
-  const [h, m] = hhmm.split(':').map(Number)
-  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm
-  const suffix = h >= 12 ? 'PM' : 'AM'
-  const hour = h % 12 === 0 ? 12 : h % 12
-  return `${hour}:${String(m).padStart(2, '0')} ${suffix}`
-}
 
 /**
  * Sidebar pages float above the notes: clicking the open page's entry again
@@ -220,7 +218,7 @@ function TodaySection(): React.JSX.Element {
                 onChange={() => toggleTask(task.id)}
               />
               <span className="sidebar__label">{task.title.trim() || 'Untitled'}</span>
-              {task.time && <span className="sidebar__today-time">{formatClock(task.time)}</span>}
+              {task.time && <span className="sidebar__today-time">{formatTime12h(task.time)}</span>}
               {task.due !== null && task.due < today && (
                 <span
                   className="sidebar__today-overdue"
