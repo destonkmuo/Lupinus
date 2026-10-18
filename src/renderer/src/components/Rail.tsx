@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { NAV_ITEMS, type NavItem } from '../nav'
+import { NAV_BY_KEY, NAV_ITEMS, type NavItem } from '../nav'
 import { useAppStore, type NavKey } from '../store/appStore'
 import {
+  BookmarkIcon,
   ChatIcon,
   LogOutIcon,
   MicIcon,
@@ -39,21 +40,24 @@ function Rail(): React.JSX.Element {
   const openNav = useAppStore((state) => state.openNav)
   const chooseVault = useAppStore((state) => state.chooseVault)
   const requestLock = useAppStore((state) => state.requestLock)
+  const bookmarks = useAppStore((state) => state.bookmarks)
+  const toggleBookmark = useAppStore((state) => state.toggleBookmark)
 
   const [hovered, setHovered] = useState(false)
   const [menu, setMenu] = useState<'profile' | null>(null)
+  const [navMenu, setNavMenu] = useState<{ key: NavKey; x: number; y: number } | null>(null)
   const [user, setUser] = useState<string | null>(null)
   const [passwordSet, setPasswordSet] = useState(false)
   const railRef = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<number | null>(null)
 
-  const expanded = hovered || menu !== null
+  const expanded = hovered || menu !== null || navMenu !== null
 
   // Latest open-state for the pointer tracker, without re-subscribing.
   const openRef = useRef(false)
   useEffect(() => {
-    openRef.current = hovered || menu !== null
-  }, [hovered, menu])
+    openRef.current = hovered || menu !== null || navMenu !== null
+  }, [hovered, menu, navMenu])
 
   // Hover is tracked from a single window-level pointermove instead of
   // mouseenter/mouseleave on the strip and bar. That avoids the classic bug
@@ -123,29 +127,34 @@ function Rail(): React.JSX.Element {
 
   // Dismiss an open flyout when clicking anywhere else.
   useEffect(() => {
-    if (menu === null) return
+    if (menu === null && navMenu === null) return
     const onDown = (event: PointerEvent): void => {
       if (railRef.current?.contains(event.target as Node)) return
       setMenu(null)
+      setNavMenu(null)
     }
     window.addEventListener('pointerdown', onDown)
     return () => window.removeEventListener('pointerdown', onDown)
-  }, [menu])
+  }, [menu, navMenu])
 
   useEffect(() => {
-    if (menu === null) return
+    if (menu === null && navMenu === null) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setMenu(null)
+      if (event.key === 'Escape') {
+        setMenu(null)
+        setNavMenu(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [menu])
+  }, [menu, navMenu])
 
   // Clicking the active destination is a no-op: it stays put instead of
   // dropping back to the notes behind it.
   const toggleNav = (key: NavKey): void => {
     if (activeNav !== key) openNav(key)
     setMenu(null)
+    setNavMenu(null)
   }
 
   const vaultName = vaultPath?.split(/[\\/]/).filter(Boolean).pop() ?? 'Local vault'
@@ -186,6 +195,10 @@ function Rail(): React.JSX.Element {
                 aria-label={item.label}
                 aria-pressed={isActive}
                 onClick={() => toggleNav(item.key)}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setNavMenu({ key: item.key, x: event.clientX, y: event.clientY })
+                }}
               >
                 <Icon size={19} />
               </button>
@@ -221,6 +234,38 @@ function Rail(): React.JSX.Element {
           </button>
         </div>
       </div>
+
+      {navMenu &&
+        (() => {
+          const nav = NAV_BY_KEY[navMenu.key]
+          const isFav = bookmarks.some(
+            (bookmark) => bookmark.kind === 'nav' && bookmark.key === navMenu.key
+          )
+          return (
+            <div
+              className="note-menu note-menu--fixed rail-menu--nav"
+              role="menu"
+              aria-label={`Actions for ${nav.label}`}
+              style={{
+                left: Math.max(8, Math.min(navMenu.x, window.innerWidth - 200)),
+                top: Math.max(8, Math.min(navMenu.y, window.innerHeight - 90))
+              }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => {
+                  setNavMenu(null)
+                  toggleBookmark({ kind: 'nav', key: navMenu.key })
+                }}
+              >
+                <BookmarkIcon size={14} />
+                {isFav ? 'Remove from Favorites' : 'Add to Favorites'}
+              </button>
+            </div>
+          )
+        })()}
 
       {menu === 'profile' && (
         <div className="rail-menu rail-menu--profile" role="menu" aria-label="Profile">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { isInlineNav } from '../nav'
+import { isInlineNav, NAV_BY_KEY } from '../nav'
 import { buildNoteGraph, orderedNotes } from '../notes'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import { addHiddenPage, splitHidden } from '../subpages'
@@ -17,6 +17,7 @@ import {
   TAB_GROUP_COLORS,
   TRASH_RETENTION_MS,
   clampSidebarWidth,
+  bookmarkToken,
   useAppStore,
   type NavKey,
   type Note
@@ -24,6 +25,7 @@ import {
 import {
   CalendarIcon,
   CardsIcon,
+  ChatIcon,
   ChevronDownIcon,
   ExclamationIcon,
   FileTextIcon,
@@ -74,6 +76,23 @@ const ICON_EMOJIS = [
 
 /** Default dot color: the app's accent blue (theme-aware). */
 const SPACE_DOT_DEFAULT = 'var(--accent)'
+
+/** A resolved favorite: a rail page or a note, ready to render as a cube. */
+type FavoriteItem =
+  | {
+      kind: 'nav'
+      key: NavKey
+      label: string
+      icon: (props: { size?: number }) => React.JSX.Element
+    }
+  | { kind: 'note'; note: Note }
+
+/** Reorder token for a favorite (matches the store's `bookmarkToken`). */
+function favoriteToken(item: FavoriteItem): string {
+  return item.kind === 'nav'
+    ? bookmarkToken({ kind: 'nav', key: item.key })
+    : bookmarkToken({ kind: 'note', id: item.note.id })
+}
 
 /** Horizontal swipe distance (px) that commits a space switch. */
 const SWIPE_PX = 55
@@ -176,6 +195,30 @@ function TodaySection(): React.JSX.Element {
       {/* Kept mounted for the expand/collapse glide; inert while shut. */}
       <div className="sidebar__today-body" inert={!open}>
         <div className="sidebar__today-body-inner">
+          {todaysTasks.length > 0 && <p className="sidebar__today-group">Tasks</p>}
+          {todaysTasks.map((task) => (
+            <div key={task.id} className="sidebar__today-row" title={task.title}>
+              <input
+                type="checkbox"
+                className="sidebar__today-check"
+                checked={false}
+                aria-label={`Mark done: ${task.title || 'Untitled'}`}
+                onChange={() => toggleTask(task.id)}
+              />
+              <span className="sidebar__label">{task.title.trim() || 'Untitled'}</span>
+              {task.time && <span className="sidebar__today-time">{formatTime12h(task.time)}</span>}
+              {task.due !== null && task.due < today && (
+                <span
+                  className="sidebar__today-overdue"
+                  title="Overdue"
+                  aria-label="Overdue"
+                  role="img"
+                >
+                  <ExclamationIcon size={12} />
+                </span>
+              )}
+            </div>
+          ))}
           {visibleEvents.length > 0 && <p className="sidebar__today-group">Events</p>}
           {visibleEvents.map((event) => (
             <div
@@ -213,30 +256,6 @@ function TodaySection(): React.JSX.Element {
               {hiddenCount} hidden · Show
             </button>
           )}
-          {todaysTasks.length > 0 && <p className="sidebar__today-group">Tasks</p>}
-          {todaysTasks.map((task) => (
-            <div key={task.id} className="sidebar__today-row" title={task.title}>
-              <input
-                type="checkbox"
-                className="sidebar__today-check"
-                checked={false}
-                aria-label={`Mark done: ${task.title || 'Untitled'}`}
-                onChange={() => toggleTask(task.id)}
-              />
-              <span className="sidebar__label">{task.title.trim() || 'Untitled'}</span>
-              {task.time && <span className="sidebar__today-time">{formatTime12h(task.time)}</span>}
-              {task.due !== null && task.due < today && (
-                <span
-                  className="sidebar__today-overdue"
-                  title="Overdue"
-                  aria-label="Overdue"
-                  role="img"
-                >
-                  <ExclamationIcon size={12} />
-                </span>
-              )}
-            </div>
-          ))}
           {count === 0 && (
             <p className="sidebar__empty">{plannerReady ? 'Nothing on for today.' : 'Loading…'}</p>
           )}
@@ -253,6 +272,7 @@ function Sidebar(): React.JSX.Element {
   // Nav destinations float above the notes: the sidebar selection tracks
   // which floating window (if any) is open.
   const activeNav = useAppStore((state) => state.activeNav)
+  const openNav = useAppStore((state) => state.openNav)
   const notes = useAppStore((state) => state.notes)
   const spaces = useAppStore((state) => state.spaces)
   const activeSpaceId = useAppStore((state) => state.activeSpaceId)
@@ -269,6 +289,7 @@ function Sidebar(): React.JSX.Element {
   const updateNote = useAppStore((state) => state.updateNote)
   const setNoteEmoji = useAppStore((state) => state.setNoteEmoji)
   const toggleBookmark = useAppStore((state) => state.toggleBookmark)
+  const moveBookmark = useAppStore((state) => state.moveBookmark)
   const bookmarks = useAppStore((state) => state.bookmarks)
   const setQuery = useAppStore((state) => state.setQuery)
   const createNote = useAppStore((state) => state.createNote)
@@ -277,6 +298,7 @@ function Sidebar(): React.JSX.Element {
   const noteSections = useAppStore((state) => state.noteSections)
   const noteSection = useAppStore((state) => state.noteSection)
   const createSection = useAppStore((state) => state.createSection)
+  const createDivider = useAppStore((state) => state.createDivider)
   const renameSection = useAppStore((state) => state.renameSection)
   const deleteSection = useAppStore((state) => state.deleteSection)
   const moveSection = useAppStore((state) => state.moveSection)
@@ -301,6 +323,10 @@ function Sidebar(): React.JSX.Element {
   const [noteOverSection, setNoteOverSection] = useState<string | null>(null)
   const [dropNoteId, setDropNoteId] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ noteId: string; x: number; y: number } | null>(null)
+  const [navMenu, setNavMenu] = useState<{ key: NavKey; x: number; y: number } | null>(null)
+  const [favDragging, setFavDragging] = useState<string | null>(null)
+  const [favDropHint, setFavDropHint] = useState<{ token: string; before: boolean } | null>(null)
+  const favDragRef = useRef<string | null>(null)
   const [childMenu, setChildMenu] = useState<{ noteId: string; x: number; y: number } | null>(null)
   const [spaceMenu, setSpaceMenu] = useState<{ x: number; y: number } | null>(null)
   const [spaceItemMenu, setSpaceItemMenu] = useState<{
@@ -357,12 +383,16 @@ function Sidebar(): React.JSX.Element {
     setNoteIconEditor(null)
   }
 
-  // Favorites are cross-space: jumping to one swaps the active space first,
-  // then opens the note in that space's tab bar.
-  const openFavorite = (note: Note): void => {
-    const spaceId = note.spaceId ?? spaces[0]?.id
+  // Favorites are cross-space for notes: jumping to one swaps the active space
+  // first, then opens the note. Rail pages just switch the active view.
+  const openFavorite = (item: FavoriteItem): void => {
+    if (item.kind === 'nav') {
+      openNav(item.key)
+      return
+    }
+    const spaceId = item.note.spaceId ?? spaces[0]?.id
     if (spaceId && spaceId !== activeSpaceId) setActiveSpace(spaceId)
-    openNoteInCurrentTab(note.id)
+    openNoteInCurrentTab(item.note.id)
   }
 
   // `height` is the expected menu height so the clamp doesn't shove a short
@@ -437,12 +467,23 @@ function Sidebar(): React.JSX.Element {
   const visibleNotes = (needle ? orderedNotes(liveNotes, noteOrder) : graph.roots).filter(
     matchesQuery
   )
-  // Favorites are global (every space), in the order they were bookmarked.
-  const favoriteNotes = useMemo(
+  // Favorites are global (every space, plus the rail pages), in bookmark order.
+  // Pages come straight from the nav registry; notes resolve against the vault
+  // and drop out when trashed/deleted.
+  const favoriteItems = useMemo(
     () =>
-      bookmarks
-        .map((id) => notes.find((note) => note.id === id))
-        .filter((note): note is Note => note !== undefined && !note.deletedAt),
+      bookmarks.flatMap((bookmark): FavoriteItem[] => {
+        if (bookmark.kind === 'nav') {
+          const nav = NAV_BY_KEY[bookmark.key]
+          if (!nav) return []
+          // Match the rail: the chat page shows the chat bubble, not the agent.
+          const icon = bookmark.key === 'agent' ? ChatIcon : nav.icon
+          return [{ kind: 'nav', key: bookmark.key, label: nav.label, icon }]
+        }
+        const note = notes.find((n) => n.id === bookmark.id)
+        if (!note || note.deletedAt) return []
+        return [{ kind: 'note', note }]
+      }),
     [bookmarks, notes]
   )
 
@@ -630,6 +671,12 @@ function Sidebar(): React.JSX.Element {
     setRenamingId(id)
   }
 
+  // A plain line divider: no title, no rename — just a draggable separator
+  // that notes can be filed under to form groups.
+  const newDivider = (): void => {
+    createDivider()
+  }
+
   const commitRename = (): void => {
     if (renamingId) renameSection(renamingId, renameDraft)
     setRenamingId(null)
@@ -736,10 +783,20 @@ function Sidebar(): React.JSX.Element {
 
   // Esc closes the row/space menus, the space editor, and the trash popover.
   useEffect(() => {
-    if (!menu && !childMenu && !spaceMenu && !spaceItemMenu && !spaceEditor && !trashOpen) return
+    if (
+      !menu &&
+      !navMenu &&
+      !childMenu &&
+      !spaceMenu &&
+      !spaceItemMenu &&
+      !spaceEditor &&
+      !trashOpen
+    )
+      return
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         setMenu(null)
+        setNavMenu(null)
         setChildMenu(null)
         setSpaceMenu(null)
         setSpaceItemMenu(null)
@@ -749,7 +806,7 @@ function Sidebar(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [menu, childMenu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen])
+  }, [menu, navMenu, childMenu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen])
 
   const expandAll = (): void => {
     setExpandedIds(new Set(visibleNotes.map((n) => n.id)))
@@ -1009,11 +1066,17 @@ function Sidebar(): React.JSX.Element {
 
   // One custom section: draggable divider header plus its notes. Dividers
   // reorder against each other; notes dropped on the header or its list get
-  // filed into the section.
-  const renderSection = (section: { id: string; title: string }): React.JSX.Element => {
+  // filed into the section. A plain line divider (`divider: true`) shows a
+  // slim rule instead of a titled header.
+  const renderSection = (section: {
+    id: string
+    title: string
+    divider?: boolean
+  }): React.JSX.Element => {
     const roots = visibleNotes.filter((note) => sectionOf(note.id) === section.id)
-    const collapsed = collapsedIds.has(section.id)
-    const renaming = renamingId === section.id
+    const isLine = section.divider === true
+    const collapsed = !isLine && collapsedIds.has(section.id)
+    const renaming = !isLine && renamingId === section.id
     const hint = sectionDropHint?.id === section.id ? sectionDropHint : null
     return (
       <div key={section.id} className="sidebar__section-block">
@@ -1038,9 +1101,22 @@ function Sidebar(): React.JSX.Element {
           }}
           onDragLeave={() => setNoteOverSection(null)}
           onDrop={(event) => onSectionDrop(event, section.id)}
-          className={`sidebar__divider${sectionDraggingId === section.id ? ' sidebar__divider--dragging' : ''}${hint ? (hint.before ? ' sidebar__divider--drop-before' : ' sidebar__divider--drop-after') : ''}${noteOverSection === section.id ? ' is-note-target' : ''}`}
+          className={`sidebar__divider${isLine ? ' sidebar__divider--line' : ''}${sectionDraggingId === section.id ? ' sidebar__divider--dragging' : ''}${hint ? (hint.before ? ' sidebar__divider--drop-before' : ' sidebar__divider--drop-after') : ''}${noteOverSection === section.id ? ' is-note-target' : ''}`}
         >
-          {renaming ? (
+          {isLine ? (
+            <>
+              <span className="sidebar__divider-rule" aria-hidden="true" />
+              <button
+                type="button"
+                className="sidebar__icon-btn sidebar__icon-btn--danger"
+                title="Remove divider"
+                aria-label="Remove divider"
+                onClick={() => deleteSection(section.id)}
+              >
+                <XIcon size={13} />
+              </button>
+            </>
+          ) : renaming ? (
             <input
               className="sidebar__divider-input"
               autoFocus
@@ -1071,24 +1147,28 @@ function Sidebar(): React.JSX.Element {
               <span className="sidebar__label">{section.title}</span>
             </button>
           )}
-          <button
-            type="button"
-            className="sidebar__icon-btn"
-            title={`Add note to ${section.title}`}
-            aria-label={`Add note to ${section.title}`}
-            onClick={() => createNote(undefined, section.id)}
-          >
-            <PlusIcon size={14} />
-          </button>
-          <button
-            type="button"
-            className="sidebar__icon-btn sidebar__icon-btn--danger"
-            title={`Delete section ${section.title}`}
-            aria-label={`Delete section ${section.title}`}
-            onClick={() => confirmDeleteSection(section.id, section.title)}
-          >
-            <TrashIcon size={14} />
-          </button>
+          {!isLine && (
+            <>
+              <button
+                type="button"
+                className="sidebar__icon-btn"
+                title={`Add note to ${section.title}`}
+                aria-label={`Add note to ${section.title}`}
+                onClick={() => createNote(undefined, section.id)}
+              >
+                <PlusIcon size={14} />
+              </button>
+              <button
+                type="button"
+                className="sidebar__icon-btn sidebar__icon-btn--danger"
+                title={`Delete section ${section.title}`}
+                aria-label={`Delete section ${section.title}`}
+                onClick={() => confirmDeleteSection(section.id, section.title)}
+              >
+                <TrashIcon size={14} />
+              </button>
+            </>
+          )}
         </div>
         {!collapsed && (
           <ul
@@ -1238,21 +1318,42 @@ function Sidebar(): React.JSX.Element {
       >
         <TodaySection />
 
-        {favoriteNotes.length > 0 && (
+        {favoriteItems.length > 0 && (
           <div className="sidebar__favorites" role="group" aria-label="Favorites">
-            {favoriteNotes.map((note) => {
+            {favoriteItems.map((item) => {
+              if (item.kind === 'nav') {
+                const Icon = item.icon
+                const isCurrent = activeNav === item.key
+                return (
+                  <button
+                    key={`nav:${item.key}`}
+                    type="button"
+                    className={`sidebar__fav${isCurrent ? ' is-active' : ''}`}
+                    title={item.label}
+                    aria-label={`${item.label}${isCurrent ? ', open' : ''}`}
+                    onClick={() => openFavorite(item)}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      setNavMenu({ key: item.key, x: event.clientX, y: event.clientY })
+                    }}
+                  >
+                    <Icon size={22} />
+                  </button>
+                )
+              }
+              const { note } = item
               const label = note.title.trim() || 'Untitled'
               const space = spaces.find((s) => s.id === note.spaceId)
               const emoji = note.emoji?.trim() ?? ''
               const isCurrent = activeTab?.noteId === note.id
               return (
                 <button
-                  key={note.id}
+                  key={`note:${note.id}`}
                   type="button"
                   className={`sidebar__fav${isCurrent ? ' is-active' : ''}`}
                   title={`${label}${space ? ` · ${space.name}` : ''}`}
                   aria-label={`${label}${isCurrent ? ', open' : ''}`}
-                  onClick={() => openFavorite(note)}
+                  onClick={() => openFavorite(item)}
                   onContextMenu={(event) => {
                     event.preventDefault()
                     openMenuAt(note.id, event.clientX, event.clientY)
@@ -1355,6 +1456,7 @@ function Sidebar(): React.JSX.Element {
       </div>
 
       {(menu ||
+        navMenu ||
         childMenu ||
         spaceMenu ||
         spaceItemMenu ||
@@ -1366,6 +1468,7 @@ function Sidebar(): React.JSX.Element {
           aria-hidden="true"
           onClick={() => {
             setMenu(null)
+            setNavMenu(null)
             setChildMenu(null)
             setSpaceMenu(null)
             setSpaceItemMenu(null)
@@ -1376,6 +1479,7 @@ function Sidebar(): React.JSX.Element {
           onContextMenu={(event) => {
             event.preventDefault()
             setMenu(null)
+            setNavMenu(null)
             setChildMenu(null)
             setSpaceMenu(null)
             setSpaceItemMenu(null)
@@ -1412,6 +1516,16 @@ function Sidebar(): React.JSX.Element {
             }}
           >
             New section
+          </button>
+          <button
+            type="button"
+            className="note-menu__item"
+            onClick={() => {
+              setSpaceMenu(null)
+              newDivider()
+            }}
+          >
+            New divider
           </button>
           <button type="button" className="note-menu__item" onClick={() => openSpaceEditor(null)}>
             New space
@@ -1479,7 +1593,7 @@ function Sidebar(): React.JSX.Element {
         >
           <div className="space-editor__head">
             {spaceEmoji.trim() ? (
-              <span className="space-editor__glyph" aria-hidden="true">
+              <span className="space-editor__glyph glyph-mono" aria-hidden="true">
                 {spaceEmoji}
               </span>
             ) : (
@@ -1503,38 +1617,44 @@ function Sidebar(): React.JSX.Element {
               }}
             />
           </div>
-          <div className="space-editor__emojis" role="group" aria-label="Choose an emoji">
-            <button
-              type="button"
-              className={`space-editor__emoji space-editor__emoji--none${spaceEmoji.trim() === '' ? ' is-active' : ''}`}
-              aria-label="No emoji (dot)"
-              aria-pressed={spaceEmoji.trim() === ''}
-              title="No emoji — show a dot"
-              onClick={() => setSpaceEmoji('')}
-            >
-              <span className="space-editor__dot" aria-hidden="true" />
-            </button>
-            {ICON_EMOJIS.map((emoji) => (
+          <div className="space-editor__section">
+            <span className="space-editor__section-label">Icon</span>
+            <div className="space-editor__emojis" role="group" aria-label="Choose an icon">
               <button
-                key={emoji}
                 type="button"
-                className={`space-editor__emoji${spaceEmoji === emoji ? ' is-active' : ''}`}
-                aria-label={emoji}
-                aria-pressed={spaceEmoji === emoji}
-                onClick={() => setSpaceEmoji(emoji)}
+                className={`space-editor__emoji space-editor__emoji--none${spaceEmoji.trim() === '' ? ' is-active' : ''}`}
+                aria-label="No icon (dot)"
+                aria-pressed={spaceEmoji.trim() === ''}
+                title="No icon — show a dot"
+                onClick={() => setSpaceEmoji('')}
               >
-                {emoji}
+                <span className="space-editor__dot" aria-hidden="true" />
               </button>
-            ))}
+              {ICON_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className={`space-editor__emoji${spaceEmoji === emoji ? ' is-active' : ''}`}
+                  aria-label={emoji}
+                  aria-pressed={spaceEmoji === emoji}
+                  onClick={() => setSpaceEmoji(emoji)}
+                >
+                  <span className="glyph-mono">{emoji}</span>
+                </button>
+              ))}
+            </div>
           </div>
-          <input
-            className="space-editor__custom"
-            value={spaceEmoji}
-            placeholder="Or type an emoji (empty for dot)"
-            aria-label="Custom emoji"
-            maxLength={8}
-            onChange={(event) => setSpaceEmoji(event.target.value)}
-          />
+          <div className="space-editor__section">
+            <span className="space-editor__section-label">Emoji</span>
+            <input
+              className="space-editor__custom"
+              value={spaceEmoji}
+              placeholder="Type or paste an emoji (empty for dot)"
+              aria-label="Type an emoji"
+              maxLength={8}
+              onChange={(event) => setSpaceEmoji(event.target.value)}
+            />
+          </div>
           {spaceEmoji.trim() === '' && (
             <div className="space-editor__colors" role="group" aria-label="Dot color">
               <span className="space-editor__colors-label">Dot color</span>
@@ -1606,48 +1726,54 @@ function Sidebar(): React.JSX.Element {
               aria-label={`Icon for ${label}`}
             >
               <div className="space-editor__head">
-                <span className="space-editor__glyph" aria-hidden="true">
+                <span className="space-editor__glyph glyph-mono" aria-hidden="true">
                   {draft || <FileTextIcon size={20} />}
                 </span>
                 <span className="space-editor__note-label" title={label}>
                   {label}
                 </span>
               </div>
-              <div className="space-editor__emojis" role="group" aria-label="Choose an icon">
-                <button
-                  type="button"
-                  className={`space-editor__emoji space-editor__emoji--none${draft === '' ? ' is-active' : ''}`}
-                  aria-label="Default page icon"
-                  aria-pressed={draft === ''}
-                  title="Default page icon"
-                  onClick={() => setNoteIconEmoji('')}
-                >
-                  <FileTextIcon size={16} />
-                </button>
-                {ICON_EMOJIS.map((emoji) => (
+              <div className="space-editor__section">
+                <span className="space-editor__section-label">Icon</span>
+                <div className="space-editor__emojis" role="group" aria-label="Choose an icon">
                   <button
-                    key={emoji}
                     type="button"
-                    className={`space-editor__emoji${draft === emoji ? ' is-active' : ''}`}
-                    aria-label={emoji}
-                    aria-pressed={draft === emoji}
-                    onClick={() => setNoteIconEmoji(emoji)}
+                    className={`space-editor__emoji space-editor__emoji--none${draft === '' ? ' is-active' : ''}`}
+                    aria-label="Default page icon"
+                    aria-pressed={draft === ''}
+                    title="Default page icon"
+                    onClick={() => setNoteIconEmoji('')}
                   >
-                    {emoji}
+                    <FileTextIcon size={16} />
                   </button>
-                ))}
+                  {ICON_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={`space-editor__emoji${draft === emoji ? ' is-active' : ''}`}
+                      aria-label={emoji}
+                      aria-pressed={draft === emoji}
+                      onClick={() => setNoteIconEmoji(emoji)}
+                    >
+                      <span className="glyph-mono">{emoji}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-              <input
-                className="space-editor__custom"
-                value={noteIconEmoji}
-                placeholder="Or type an emoji (empty for default)"
-                aria-label="Custom emoji"
-                maxLength={8}
-                onChange={(event) => setNoteIconEmoji(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') saveNoteIcon()
-                }}
-              />
+              <div className="space-editor__section">
+                <span className="space-editor__section-label">Emoji</span>
+                <input
+                  className="space-editor__custom"
+                  value={noteIconEmoji}
+                  placeholder="Type or paste an emoji (empty for default)"
+                  aria-label="Type an emoji"
+                  maxLength={8}
+                  onChange={(event) => setNoteIconEmoji(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') saveNoteIcon()
+                  }}
+                />
+              </div>
               <div className="space-editor__actions">
                 <button
                   type="button"
@@ -1715,12 +1841,53 @@ function Sidebar(): React.JSX.Element {
             </div>
           )
         })()}
+      {navMenu &&
+        (() => {
+          const nav = NAV_BY_KEY[navMenu.key]
+          if (!nav) return null
+          const Icon = navMenu.key === 'agent' ? ChatIcon : nav.icon
+          const at = clampMenu(navMenu.x, navMenu.y, 100)
+          return (
+            <div
+              className="note-menu note-menu--fixed"
+              role="menu"
+              aria-label={`Actions for ${nav.label}`}
+              style={{ left: at.x, top: at.y }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => {
+                  setNavMenu(null)
+                  openNav(navMenu.key)
+                }}
+              >
+                <Icon size={14} />
+                Open {nav.label}
+              </button>
+              <button
+                type="button"
+                className="note-menu__item"
+                onClick={() => {
+                  setNavMenu(null)
+                  toggleBookmark({ kind: 'nav', key: navMenu.key })
+                }}
+              >
+                <BookmarkIcon size={14} />
+                Remove from Favorites
+              </button>
+            </div>
+          )
+        })()}
       {menu &&
         (() => {
           const target = notes.find((n) => n.id === menu.noteId)
           if (!target || target.deletedAt) return null
           const label = target.title.trim() || 'Untitled'
-          const isBookmarked = bookmarks.includes(target.id)
+          const isBookmarked = bookmarks.some(
+            (bookmark) => bookmark.kind === 'note' && bookmark.id === target.id
+          )
           const isStudyChild = parseStudyChild(splitHidden(target.content).body) !== null
           return (
             <div
@@ -1770,7 +1937,7 @@ function Sidebar(): React.JSX.Element {
                 className="note-menu__item"
                 onClick={() => {
                   setMenu(null)
-                  toggleBookmark(target.id)
+                  toggleBookmark({ kind: 'note', id: target.id })
                 }}
               >
                 <BookmarkIcon size={14} />
@@ -1907,7 +2074,9 @@ function Sidebar(): React.JSX.Element {
                 }}
               >
                 {space.emoji.trim() ? (
-                  <span aria-hidden="true">{space.emoji}</span>
+                  <span className="glyph-mono" aria-hidden="true">
+                    {space.emoji}
+                  </span>
                 ) : (
                   <span
                     className="sidebar__space-dot"

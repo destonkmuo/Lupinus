@@ -335,6 +335,16 @@ body {
   display: block;
 }
 
+/* Monochrome glyph rendering for space and note icons. Forcing the text
+   emoji presentation makes glyphs inherit the surrounding text color, and the
+   grayscale filter covers emoji that only ship a color form. */
+.glyph-mono,
+.note-emoji,
+.sidebar__fav-emoji {
+  font-variant-emoji: text;
+  filter: grayscale(1);
+}
+
 /* Custom page emoji standing in for a note icon (tabs, sidebar rows, trash). */
 .note-emoji {
   display: inline-block;
@@ -578,11 +588,13 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
   gap: 6px;
-  /* Left inset matches the Today card and search field above. */
-  margin: 0 0 10px 4px;
-  padding: 0 2px;
+  /* Left inset matches the Today card and search field above. The top padding
+     is headroom for the hover lift — the scroll container clips at its padding
+     box, so without it the raised tile loses its top edge. */
+  margin: 0 0 8px 4px;
+  padding: 4px 2px 2px;
   /* 3 rows of 54px tiles + 2 gaps. */
-  max-height: 174px;
+  max-height: 178px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(var(--ink), 0.16) transparent;
@@ -1049,7 +1061,24 @@ body {
   background: var(--accent);
 }
 
+/* Free-form emoji entry, kept separate from the monochrome icon palette:
+   there is no curated emoji list here, just an input. */
+.space-editor__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.space-editor__section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ev-c-text-3);
+}
+
 .space-editor__custom {
+  width: 100%;
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -1820,6 +1849,43 @@ button.sidebar__section-title:hover {
   background: var(--hover);
 }
 
+/* Plain line divider: a slim, untitled rule that groups notes. */
+.sidebar__divider--line {
+  gap: 8px;
+  padding: 6px 4px;
+}
+
+.sidebar__divider--line:hover {
+  background: transparent;
+}
+
+.sidebar__divider-rule {
+  flex: 1;
+  height: 1px;
+  border-radius: 1px;
+  background: rgba(var(--ink), 0.16);
+  transition: background-color 160ms ease;
+}
+
+.sidebar__divider--line:hover .sidebar__divider-rule,
+.sidebar__divider--line:focus-within .sidebar__divider-rule {
+  background: rgba(var(--ink), 0.34);
+}
+
+.sidebar__divider--line.is-note-target .sidebar__divider-rule {
+  background: var(--accent);
+  height: 2px;
+}
+
+.sidebar__divider--line .sidebar__icon-btn {
+  opacity: 0;
+}
+
+.sidebar__divider--line:hover .sidebar__icon-btn,
+.sidebar__divider--line:focus-within .sidebar__icon-btn {
+  opacity: 1;
+}
+
 .sidebar__divider-main {
   display: flex;
   flex: 1;
@@ -2515,12 +2581,13 @@ button.sidebar__status:hover {
   flex: none;
 }
 
-/* Breadcrumb hierarchy (parent → child → this note), left-aligned with real
-   arrow icons between levels. Ancestors navigate in place; the current note
-   is plain text. */
+/* Breadcrumb hierarchy (parent → child → this note), left-aligned. Every
+   crumb is prefixed with `>`, so the bar reads `> root > … > parent > this`.
+   Ancestors navigate in place; the current note is plain text. */
 .note__crumbs {
   display: flex;
   align-items: center;
+  gap: 4px;
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -8396,6 +8463,12 @@ div.home__today-row:hover {
   left: 12px;
   bottom: 58px;
   transform-origin: left bottom;
+}
+
+/* Cursor-anchored menu on a rail button. The zero-width rail sets
+   `pointer-events: none`, so the menu has to opt back in. */
+.rail-menu--nav {
+  pointer-events: auto;
 }
 
 @keyframes rail-menu-in {

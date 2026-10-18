@@ -59,6 +59,32 @@ export interface NoteSpace {
   dotColor?: string
 }
 
+/**
+ * A sidebar favorite. Either a rail destination page (Home, Calendar, …) or a
+ * specific note. Stored in one ordered list so pages and notes can be mixed.
+ */
+export type Bookmark = { kind: 'nav'; key: NavKey } | { kind: 'note'; id: string }
+
+/** Favorites seeded on a fresh vault: the core rail destinations. */
+export const DEFAULT_BOOKMARKS: Bookmark[] = [
+  { kind: 'nav', key: 'home' },
+  { kind: 'nav', key: 'calendar' },
+  { kind: 'nav', key: 'tasks' },
+  { kind: 'nav', key: 'agent' }
+]
+
+/** True when two favorites point at the same page or the same note. */
+export function bookmarkEquals(a: Bookmark, b: Bookmark): boolean {
+  if (a.kind === 'nav' && b.kind === 'nav') return a.key === b.key
+  if (a.kind === 'note' && b.kind === 'note') return a.id === b.id
+  return false
+}
+
+/** Stable de-dupe key for a favorite. */
+export function bookmarkToken(bookmark: Bookmark): string {
+  return bookmark.kind === 'nav' ? `nav:${bookmark.key}` : `note:${bookmark.id}`
+}
+
 /** Trash auto-destroys notes 30 days after they were trashed. */
 export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -179,8 +205,10 @@ interface AppState {
   noteOrder: string[]
   /** User-defined sidebar sections (dividers), in display order. */
   noteSections: NoteSection[]
-  /** Bookmarked note ids (sidebar lens). Stale ids render nothing. */
-  bookmarks: string[]
+  /** Bookmarked rail pages and notes (sidebar lens), in user order. */
+  bookmarks: Bookmark[]
+  /** Set once the default page favorites have been seeded for this vault. */
+  bookmarksSeeded: boolean
   /** noteId -> image src -> layout. Persisted per note, saved on change. */
   imageLayout: Record<string, Record<string, ImageLayout>>
   /** Note awaiting an in-sidebar rename (set on creation, consumed once). */
@@ -286,11 +314,14 @@ interface AppState {
   moveTab: (dragId: string, targetId: string | null, before: boolean) => void
   moveNote: (dragId: string, targetId: string | null, before: boolean) => void
   createSection: (title?: string, spaceId?: string) => string
+  createDivider: (spaceId?: string) => string
   renameSection: (id: string, title: string) => void
   deleteSection: (id: string) => void
   moveSection: (dragId: string, targetId: string | null, before: boolean) => void
   setNoteSection: (noteId: string, sectionId: string | null) => void
-  toggleBookmark: (noteId: string) => void
+  toggleBookmark: (target: Bookmark) => void
+  /** Reorder favorites. Tokens come from `bookmarkToken`. */
+  moveBookmark: (dragToken: string, targetToken: string, before: boolean) => void
   setImageSide: (noteId: string, src: string, side: ImageSide) => void
   setImageSize: (noteId: string, src: string, w: number | null) => void
   clearImageFloat: (noteId: string, src: string) => void
@@ -364,6 +395,8 @@ export interface NoteSection {
   title: string
   /** Owning space: sections are independent per space. */
   spaceId: string
+  /** A plain, untitled line divider grouping the notes filed under it. */
+  divider?: boolean
 }
 
 /** Google-style tab group colors. */
@@ -919,7 +952,8 @@ export const useAppStore = create<AppState>()(
       noteOrder: [],
       noteSections: [],
       noteSection: {},
-      bookmarks: [],
+      bookmarks: DEFAULT_BOOKMARKS.map((bookmark) => ({ ...bookmark })),
+      bookmarksSeeded: true,
       imageLayout: {},
       renamingNoteId: null,
       tabs: [],
@@ -1525,6 +1559,16 @@ export const useAppStore = create<AppState>()(
         set((state) => ({ noteSections: [...state.noteSections, section] }))
         return section.id
       },
+      createDivider: (spaceId?: string) => {
+        const section: NoteSection = {
+          id: uid(),
+          title: '',
+          spaceId: spaceId ?? get().activeSpaceId,
+          divider: true
+        }
+        set((state) => ({ noteSections: [...state.noteSections, section] }))
+        return section.id
+      },
       renameSection: (id, title) =>
         set((state) => ({
           noteSections: state.noteSections.map((s) =>
@@ -1564,12 +1608,24 @@ export const useAppStore = create<AppState>()(
           return { noteSection }
         }),
       setRenamingNoteId: (renamingNoteId) => set({ renamingNoteId }),
-      toggleBookmark: (noteId) =>
+      toggleBookmark: (target) =>
         set((state) => ({
-          bookmarks: state.bookmarks.includes(noteId)
-            ? state.bookmarks.filter((id) => id !== noteId)
-            : [...state.bookmarks, noteId]
+          bookmarks: state.bookmarks.some((bookmark) => bookmarkEquals(bookmark, target))
+            ? state.bookmarks.filter((bookmark) => !bookmarkEquals(bookmark, target))
+            : [...state.bookmarks, target]
         })),
+      moveBookmark: (dragToken, targetToken, before) =>
+        set((state) => {
+          if (dragToken === targetToken) return {}
+          const from = state.bookmarks.findIndex((b) => bookmarkToken(b) === dragToken)
+          if (from < 0) return {}
+          const dragged = state.bookmarks[from]
+          const without = state.bookmarks.filter((b) => bookmarkToken(b) !== dragToken)
+          let to = without.findIndex((b) => bookmarkToken(b) === targetToken)
+          if (to < 0) to = without.length
+          if (!before) to += 1
+          return { bookmarks: [...without.slice(0, to), dragged, ...without.slice(to)] }
+        }),
       setImageSide: (noteId, src, side) =>
         set((state) => ({
           imageLayout: {
@@ -1769,7 +1825,9 @@ export const useAppStore = create<AppState>()(
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, keep),
             noteSection,
-            bookmarks: state.bookmarks.filter((id) => !ids.has(id)),
+            bookmarks: state.bookmarks.filter(
+              (bookmark) => bookmark.kind !== 'note' || !ids.has(bookmark.id)
+            ),
             tabGroup: pruneTabGroupMap(state.tabGroup, keep)
           }
         })
@@ -1805,7 +1863,9 @@ export const useAppStore = create<AppState>()(
             tabRecency: state.tabRecency.filter((t) => kept.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, kept),
             noteSection,
-            bookmarks: state.bookmarks.filter((bookmarkedId) => bookmarkedId !== id),
+            bookmarks: state.bookmarks.filter(
+              (bookmark) => bookmark.kind !== 'note' || bookmark.id !== id
+            ),
             tabGroup: pruneTabGroupMap(state.tabGroup, kept)
           }
         })
@@ -2362,6 +2422,7 @@ export const useAppStore = create<AppState>()(
         noteSections: state.noteSections,
         noteSection: state.noteSection,
         bookmarks: state.bookmarks,
+        bookmarksSeeded: state.bookmarksSeeded,
         imageLayout: state.imageLayout,
         tabGroups: state.tabGroups,
         tabGroup: state.tabGroup,
@@ -2429,6 +2490,7 @@ export const useAppStore = create<AppState>()(
             | 'noteSections'
             | 'noteSection'
             | 'bookmarks'
+            | 'bookmarksSeeded'
             | 'imageLayout'
             | 'tabGroups'
             | 'tabGroup'
@@ -2535,23 +2597,68 @@ export const useAppStore = create<AppState>()(
           .map((s) => ({
             id: s.id,
             title: s.title,
-            spaceId: s.spaceId && spaceIds.has(s.spaceId) ? s.spaceId : (spaces[0]?.id ?? '')
+            spaceId: s.spaceId && spaceIds.has(s.spaceId) ? s.spaceId : (spaces[0]?.id ?? ''),
+            ...(s.divider ? { divider: true } : {})
           }))
         const sectionIds = new Set(noteSections.map((s) => s.id))
         const noteSection: Record<string, string> = {}
         for (const [noteId, sectionId] of Object.entries(saved.noteSection ?? {})) {
           if (noteIds.has(noteId) && sectionIds.has(sectionId)) noteSection[noteId] = sectionId
         }
-        // Legacy `favorites` key migrates to `bookmarks` on first load.
+        // Favorites: legacy entries are bare note ids; newer ones are tagged
+        // objects (`nav` pages or `note` ids). Stale entries are dropped, and a
+        // fresh vault (no saved value) seeds the default rail pages.
         const legacyFavorites: unknown = (saved as { favorites?: unknown }).favorites
-        const bookmarkSource: unknown[] = Array.isArray(saved.bookmarks)
+        const bookmarkSource: unknown[] | null = Array.isArray(saved.bookmarks)
           ? saved.bookmarks
           : Array.isArray(legacyFavorites)
             ? legacyFavorites
-            : []
-        const bookmarks = bookmarkSource
-          .filter((id): id is string => typeof id === 'string')
-          .filter((id) => noteIds.has(id))
+            : null
+        const parseBookmarks = (source: unknown[]): Bookmark[] => {
+          const parsed: Bookmark[] = []
+          for (const entry of source) {
+            if (typeof entry === 'string') {
+              if (noteIds.has(entry)) parsed.push({ kind: 'note', id: entry })
+              continue
+            }
+            if (entry === null || typeof entry !== 'object') continue
+            const record = entry as { kind?: unknown; key?: unknown; id?: unknown }
+            if (record.kind === 'nav') {
+              const key = asNavKey(record.key)
+              if (key) parsed.push({ kind: 'nav', key })
+            } else if (
+              record.kind === 'note' &&
+              typeof record.id === 'string' &&
+              noteIds.has(record.id)
+            ) {
+              parsed.push({ kind: 'note', id: record.id })
+            }
+          }
+          const seen = new Set<string>()
+          return parsed.filter((bookmark) => {
+            const token = bookmarkToken(bookmark)
+            if (seen.has(token)) return false
+            seen.add(token)
+            return true
+          })
+        }
+        // A vault that has never been seeded (no saved bookmarks, or saved
+        // before pages were bookmarkable) gets the default rail pages, keeping
+        // any legacy note favorites behind them. Afterwards the flag sticks, so
+        // clearing every favorite doesn't bring the defaults back.
+        const parsedBookmarks = bookmarkSource === null ? null : parseBookmarks(bookmarkSource)
+        let bookmarks: Bookmark[]
+        if (parsedBookmarks === null) {
+          bookmarks = DEFAULT_BOOKMARKS.map((bookmark) => ({ ...bookmark }))
+        } else if (saved.bookmarksSeeded) {
+          bookmarks = parsedBookmarks
+        } else {
+          const have = new Set(parsedBookmarks.map(bookmarkToken))
+          bookmarks = [
+            ...DEFAULT_BOOKMARKS.filter((bookmark) => !have.has(bookmarkToken(bookmark))),
+            ...parsedBookmarks
+          ].map((bookmark) => ({ ...bookmark }))
+        }
         const imageLayout: Record<string, Record<string, ImageLayout>> = {}
         for (const [noteId, inner] of Object.entries(saved.imageLayout ?? {})) {
           if (!noteIds.has(noteId) || typeof inner !== 'object' || inner === null) continue
@@ -2599,6 +2706,7 @@ export const useAppStore = create<AppState>()(
           noteSections,
           noteSection,
           bookmarks,
+          bookmarksSeeded: true,
           imageLayout,
           tabGroups,
           tabGroup,

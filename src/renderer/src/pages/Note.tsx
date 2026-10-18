@@ -18,8 +18,7 @@ import {
   MindmapIcon,
   QuizIcon,
   MoreIcon,
-  BookmarkIcon,
-  ChevronRightIcon
+  BookmarkIcon
 } from '../components/icons'
 import { parseWikiLinks, resolveWikiTarget } from '../notes'
 import { useAppStore, type ImageLayout } from '../store/appStore'
@@ -46,7 +45,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   const bookmarks = useAppStore((state) => state.bookmarks)
   const toggleBookmark = useAppStore((state) => state.toggleBookmark)
   const openNoteInCurrentTab = useAppStore((state) => state.openNoteInCurrentTab)
-  const isBookmarked = note !== null && bookmarks.includes(note.id)
+  const isBookmarked = note !== null && bookmarks.some((b) => b.kind === 'note' && b.id === note.id)
 
   const [dropActive, setDropActive] = useState(false)
   const [dropStatus, setDropStatus] = useState<{ msg: string; error: boolean } | null>(null)
@@ -396,14 +395,12 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         <nav className="note__crumbs" aria-label="Note hierarchy">
           {crumbs.map((crumb, index) => {
             const last = index === crumbs.length - 1
+            const label = `> ${crumb.title}`
             return (
               <span key={crumb.id} className="note__crumb-wrap">
-                {index > 0 && (
-                  <ChevronRightIcon size={13} className="note__crumb-sep" aria-hidden="true" />
-                )}
                 {last ? (
                   <span className="note__crumb note__crumb--current" aria-current="page">
-                    {crumb.title}
+                    {label}
                   </span>
                 ) : (
                   <button
@@ -412,7 +409,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
                     title={crumb.title}
                     onClick={() => openNoteInCurrentTab(crumb.id)}
                   >
-                    {crumb.title}
+                    {label}
                   </button>
                 )}
               </span>
@@ -430,7 +427,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
             title={isBookmarked ? 'Remove from Favorites' : 'Add to Favorites'}
             aria-label={isBookmarked ? 'Remove from Favorites' : 'Add to Favorites'}
             aria-pressed={isBookmarked}
-            onClick={() => toggleBookmark(note.id)}
+            onClick={() => toggleBookmark({ kind: 'note', id: note.id })}
           >
             <BookmarkIcon size={16} />
           </button>
