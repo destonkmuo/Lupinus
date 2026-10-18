@@ -160,7 +160,6 @@ body {
      the old negative-margin overlap could never hide the seam.) */
   background:
     linear-gradient(var(--line), var(--line)) left bottom / 100% 1px no-repeat,
-    radial-gradient(120% 140% at 50% -40%, rgba(106, 176, 255, 0.07), transparent 60%),
     #1a1a1a;
   transition: padding-left 260ms cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -197,6 +196,7 @@ body {
 
 .tab {
   display: flex;
+  position: relative;
   align-items: center;
   flex: none;
   min-width: 120px;
@@ -239,6 +239,30 @@ body {
   box-shadow: inset -2px 0 0 var(--accent);
 }
 
+/* Four or more tabs: a faint rounded rule in each gap keeps a long row
+   reading as separate notes instead of one merged smear. */
+.tabbar__list.is-divided .tab + .tab::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  width: 1px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--ev-c-text-3);
+  opacity: 0.55;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* The active tab melts into the content below, so no rule on either of its
+   edges (the gap before it and the one after it stay clean). */
+.tabbar__list.is-divided .tab.is-active + .tab::before,
+.tabbar__list.is-divided .tab + .tab.is-active::before {
+  content: none;
+}
+
 .tab:hover {
   background: var(--hover);
   border-color: rgba(var(--ink), 0.07);
@@ -248,9 +272,7 @@ body {
   position: relative;
   background: var(--main-bg);
   border-color: var(--line);
-  box-shadow:
-    0 -6px 18px rgba(0, 0, 0, 0.35),
-    inset 0 2px 0 var(--accent);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
 }
 
 /* Cover bar: masks the separator line (and the tab's own side-border feet)
@@ -383,32 +405,39 @@ body {
   width: 26px;
   height: 26px;
   margin-bottom: 5px;
-  border: 1px dashed rgba(var(--ink), 0.16);
-  border-radius: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
   background: transparent;
-  color: var(--ev-c-text-2);
+  color: var(--ev-c-text-3);
   cursor: pointer;
   transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .tabbar__new:hover {
   background: var(--hover-strong);
-  border-color: rgba(var(--ink), 0.3);
   color: var(--ev-c-text-1);
 }
 
+.tabbar__new:active {
+  transform: scale(0.92);
+}
+
 .tabbar__new:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: default;
 }
 
 .tabbar__new:disabled:hover {
   background: transparent;
-  border-color: rgba(var(--ink), 0.16);
-  color: var(--ev-c-text-2);
+  color: var(--ev-c-text-3);
+}
+
+.tabbar__new:disabled:active {
+  transform: none;
 }
 
 .empty {
@@ -506,6 +535,24 @@ body {
   animation: core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* Windows/Linux: no floating traffic lights to clear, so the status bubble
+   rides at the right of the search row and the notes shift up into the
+   reclaimed band. */
+:root:not(.is-mac) .sidebar__top {
+  flex-direction: row;
+  align-items: center;
+}
+
+:root:not(.is-mac) .sidebar__search {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar__status--inline {
+  margin: 0 2px 0 6px;
+  -webkit-app-region: no-drag;
+}
+
 .sidebar__spacebar {
   display: flex;
   align-items: center;
@@ -597,10 +644,13 @@ body {
   box-shadow: inset -2px 0 0 var(--accent);
 }
 
+/* Always in carousel mode: the active space centers and its neighbours fade
+   by distance. `safe center` keeps a short strip centered when it fits and
+   falls back to start when it overflows so every icon stays reachable (the
+   scroll centering above then lands the active one mid-strip). */
 .sidebar__spacebar.is-carousel .sidebar__space-icons {
-  justify-content: flex-start;
+  justify-content: safe center;
   gap: 3px;
-  padding: 0 7px;
 }
 
 .sidebar__spacebar.is-carousel .sidebar__space-icon.is-distance-0 {
@@ -1117,9 +1167,10 @@ body {
   padding: 0 8px 4px;
 }
 
-/* Tighter vertical spacing for the Notes header (+ button). */
+/* Tighter vertical spacing for the Notes header (+ button), and a right inset
+   matching the note rows so the "+" lines up with their trailing icons. */
 .sidebar__section > .sidebar__section-head {
-  padding: 0 8px 0;
+  padding: 0 2px 0 8px;
 }
 
 /* Larger hit area for the Notes header actions (graph / new note). */
@@ -7850,8 +7901,7 @@ div.home__today-row:hover {
 
 /* Tab bar gradient end. */
 :root[data-theme='light'] .tabbar {
-  background:
-    radial-gradient(120% 140% at 50% -40%, rgba(47, 111, 208, 0.08), transparent 60%), #eef0f3;
+  background: #eef0f3;
 }
 
 /* White text on saturated accents becomes explicit (was near-black). */
@@ -8077,6 +8127,13 @@ div.home__today-row:hover {
 .is-mac .rail__bar {
   top: 40px;
   padding-top: 10px;
+}
+
+/* Windows/Linux: no floating traffic lights, so the pill reaches the very top
+   and bottom of the window instead of leaving an inset gap. */
+:root:not(.is-mac) .rail__bar {
+  top: 0;
+  bottom: 0;
 }
 
 .rail__group {

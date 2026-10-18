@@ -37,6 +37,12 @@ import {
   XIcon
 } from './icons'
 
+// macOS floats the traffic lights over the sidebar, so the search sits below a
+// slim status band reserved for them. Elsewhere the frame is native and the
+// band would only waste vertical space, so the status bubble rides in the
+// search row and everything shifts up.
+const IS_MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+
 /** "9:00 AM" from an event start (all-day events have no time part). */
 function formatEventTime(item: CalendarItem): string {
   const time = itemStartTime(item)
@@ -92,7 +98,7 @@ function toggleNav(key: NavKey): void {
  * old "upcoming events" placeholder, which never showed anything actionable.
  */
 function TodaySection(): React.JSX.Element {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const calendarItems = useAppStore((state) => state.calendarItems)
   const subscriptions = useAppStore((state) => state.subscriptions)
   const localCalendarColor = useAppStore((state) => state.localCalendarColor)
@@ -368,7 +374,6 @@ function Sidebar(): React.JSX.Element {
   const resizeStartRef = useRef({ x: 0, width: 0 })
 
   useEffect(() => {
-    if (spaces.length <= 3) return
     const container = spaceCarouselRef.current
     if (!container) return
     const button = [...container.querySelectorAll<HTMLElement>('[data-space-id]')].find(
@@ -1166,16 +1171,18 @@ function Sidebar(): React.JSX.Element {
       }}
     >
       <div className="sidebar__top">
-        <div className="sidebar__statusrow">
-          <button
-            type="button"
-            key={coreState}
-            className={`sidebar__state sidebar__state--${coreState} sidebar__status`}
-            title={`Core: ${coreState} · open SeeMO`}
-            aria-label={`Core status: ${coreState} · open SeeMO`}
-            onClick={() => useAppStore.getState().openNav('agent')}
-          />
-        </div>
+        {IS_MAC && (
+          <div className="sidebar__statusrow">
+            <button
+              type="button"
+              key={coreState}
+              className={`sidebar__state sidebar__state--${coreState} sidebar__status`}
+              title={`Core: ${coreState} · open SeeMO`}
+              aria-label={`Core status: ${coreState} · open SeeMO`}
+              onClick={() => useAppStore.getState().openNav('agent')}
+            />
+          </div>
+        )}
         <label className="sidebar__search">
           <SearchIcon size={15} />
           <input
@@ -1186,8 +1193,17 @@ function Sidebar(): React.JSX.Element {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <kbd className="sidebar__kbd">^K</kbd>
         </label>
+        {!IS_MAC && (
+          <button
+            type="button"
+            key={coreState}
+            className={`sidebar__state sidebar__state--${coreState} sidebar__status sidebar__status--inline`}
+            title={`Core: ${coreState} · open SeeMO`}
+            aria-label={`Core status: ${coreState} · open SeeMO`}
+            onClick={() => useAppStore.getState().openNav('agent')}
+          />
+        )}
       </div>
 
       <div
@@ -1684,7 +1700,7 @@ function Sidebar(): React.JSX.Element {
             </div>
           )
         })()}
-      <div className={`sidebar__spacebar${spaces.length > 3 ? ' is-carousel' : ''}`}>
+      <div className="sidebar__spacebar is-carousel">
         <button
           type="button"
           className={`sidebar__trash-btn${trashOpen ? ' is-active' : ''}`}
@@ -1704,15 +1720,14 @@ function Sidebar(): React.JSX.Element {
         >
           {spaces.map((space, index) => {
             const distance = Math.abs(index - activeSpaceIndex)
-            const circularDistance =
-              spaces.length > 3 ? Math.min(distance, spaces.length - distance) : distance
+            const circularDistance = Math.min(distance, spaces.length - distance)
             return (
               <button
                 key={space.id}
                 type="button"
                 data-space-id={space.id}
                 draggable
-                className={`sidebar__space-icon${space.id === activeSpaceId ? ' is-active' : ''}${spaces.length > 3 ? ` is-distance-${Math.min(circularDistance, 3)}` : ''}${spaceDraggingId === space.id ? ' is-dragging' : ''}${spaceDropHint?.id === space.id ? (spaceDropHint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
+                className={`sidebar__space-icon${space.id === activeSpaceId ? ' is-active' : ''} is-distance-${Math.min(circularDistance, 3)}${spaceDraggingId === space.id ? ' is-dragging' : ''}${spaceDropHint?.id === space.id ? (spaceDropHint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
                 title={space.emoji.trim() ? `${space.emoji} ${space.name}` : space.name}
                 aria-label={`${space.name}${space.id === activeSpaceId ? ', current space' : ''}`}
                 aria-pressed={space.id === activeSpaceId}

@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { NAV_ITEMS, type NavItem } from '../nav'
 import { useAppStore, type NavKey } from '../store/appStore'
-import { LogOutIcon, MicIcon, MicMutedIcon, SettingsIcon, SwitchUserIcon, UserIcon } from './icons'
+import {
+  ChatIcon,
+  LogOutIcon,
+  MicIcon,
+  MicMutedIcon,
+  SettingsIcon,
+  SwitchUserIcon,
+  UserIcon
+} from './icons'
 
 /** Rail destinations, in display order (matches the icon strip). */
 const RAIL_ORDER: NavKey[] = ['home', 'calendar', 'tasks', 'email', 'graph', 'agent', 'misc']
@@ -167,7 +175,7 @@ function Rail(): React.JSX.Element {
       <div className={`rail__bar${expanded ? ' is-open' : ''}`}>
         <nav className="rail__group" aria-label="Primary">
           {railItems.map((item) => {
-            const Icon = item.icon
+            const Icon = item.key === 'agent' ? ChatIcon : item.icon
             const isActive = activeNav === item.key
             return (
               <button

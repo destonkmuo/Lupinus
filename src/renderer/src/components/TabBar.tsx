@@ -271,7 +271,7 @@ function TabBar(): React.JSX.Element {
         </button>
       </div>
       <div
-        className="tabbar__list"
+        className={`tabbar__list${tabs.length > 2 ? ' is-divided' : ''}`}
         onDragOver={(event) => event.preventDefault()}
         onDrop={onListDrop}
       >

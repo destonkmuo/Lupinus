@@ -47,6 +47,15 @@ export function AgentIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+/** Chat / SeeMO conversation bubble. */
+export function ChatIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </IconBase>
+  )
+}
+
 export function ActivityIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>
