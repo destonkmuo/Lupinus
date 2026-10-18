@@ -50,8 +50,8 @@ function formatEventTime(item: CalendarItem): string {
   return formatTime12h(time)
 }
 
-/** Quick-pick emoji palette when creating or editing a space. */
-const SPACE_EMOJIS = [
+/** Quick-pick emoji palette for spaces and note icons. */
+const ICON_EMOJIS = [
   '📝',
   '🏠',
   '💼',
@@ -267,6 +267,7 @@ function Sidebar(): React.JSX.Element {
   const openNoteInCurrentTab = useAppStore((state) => state.openNoteInCurrentTab)
   const openNoteNewTab = useAppStore((state) => state.openNoteNewTab)
   const updateNote = useAppStore((state) => state.updateNote)
+  const setNoteEmoji = useAppStore((state) => state.setNoteEmoji)
   const toggleBookmark = useAppStore((state) => state.toggleBookmark)
   const bookmarks = useAppStore((state) => state.bookmarks)
   const setQuery = useAppStore((state) => state.setQuery)
@@ -290,9 +291,6 @@ function Sidebar(): React.JSX.Element {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  // Bookmarks render the same notes as the main tree; this separate set keeps
-  // expanding/collapsing one instance from mirroring the other.
-  const [bookmarkExpandedIds, setBookmarkExpandedIds] = useState<Set<string>>(new Set())
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -316,6 +314,9 @@ function Sidebar(): React.JSX.Element {
   const [spaceEmoji, setSpaceEmoji] = useState('')
   // Explicit dot color ('' = automatic). Only used in dot mode.
   const [spaceDot, setSpaceDot] = useState('')
+  // Note icon editor: an id + the emoji being picked ('' = default page icon).
+  const [noteIconEditor, setNoteIconEditor] = useState<{ noteId: string } | null>(null)
+  const [noteIconEmoji, setNoteIconEmoji] = useState('')
   const [spaceDraggingId, setSpaceDraggingId] = useState<string | null>(null)
   const [spaceDropHint, setSpaceDropHint] = useState<{ id: string; before: boolean } | null>(null)
   const [trashOpen, setTrashOpen] = useState(false)
@@ -342,6 +343,26 @@ function Sidebar(): React.JSX.Element {
     if (spaceEditor.spaceId) updateSpace(spaceEditor.spaceId, { name, emoji, dotColor })
     else createSpace(name, emoji, dotColor)
     setSpaceEditor(null)
+  }
+
+  const openNoteIconEditor = (note: Note): void => {
+    setMenu(null)
+    setNoteIconEmoji(note.emoji?.trim() ?? '')
+    setNoteIconEditor({ noteId: note.id })
+  }
+
+  const saveNoteIcon = (): void => {
+    if (!noteIconEditor) return
+    setNoteEmoji(noteIconEditor.noteId, noteIconEmoji)
+    setNoteIconEditor(null)
+  }
+
+  // Favorites are cross-space: jumping to one swaps the active space first,
+  // then opens the note in that space's tab bar.
+  const openFavorite = (note: Note): void => {
+    const spaceId = note.spaceId ?? spaces[0]?.id
+    if (spaceId && spaceId !== activeSpaceId) setActiveSpace(spaceId)
+    openNoteInCurrentTab(note.id)
   }
 
   // `height` is the expected menu height so the clamp doesn't shove a short
@@ -416,7 +437,14 @@ function Sidebar(): React.JSX.Element {
   const visibleNotes = (needle ? orderedNotes(liveNotes, noteOrder) : graph.roots).filter(
     matchesQuery
   )
-  const bookmarkRoots = visibleNotes.filter((note) => bookmarks.includes(note.id))
+  // Favorites are global (every space), in the order they were bookmarked.
+  const favoriteNotes = useMemo(
+    () =>
+      bookmarks
+        .map((id) => notes.find((note) => note.id === id))
+        .filter((note): note is Note => note !== undefined && !note.deletedAt),
+    [bookmarks, notes]
+  )
 
   // Trash lives in the spacebar now: whole-vault list, newest first.
   const [nowMs] = useState(() => Date.now())
@@ -438,18 +466,6 @@ function Sidebar(): React.JSX.Element {
 
   const toggleExpand = (id: string): void => {
     setExpandedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
-  }
-
-  const toggleBookmarkExpand = (id: string): void => {
-    setBookmarkExpandedIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
         next.delete(id)
@@ -823,19 +839,11 @@ function Sidebar(): React.JSX.Element {
   // Notion-style tree: a note with outgoing [[links]] expands to reveal those
   // child pages nested beneath it. Only top-level rows are draggable; nested
   // rows are link views into the same flat order. `ancestors` guards cycles.
-  // JSON study children render their app icon instead of the page icon.
-  //
-  // `scope` keeps the Bookmarks mirror and the main tree as separate element
-  // instances: keys, DOM attributes, expand state, and the active highlight
-  // are all scoped so interacting with one never reproduces on the other.
-  const renderTree = (
-    note: Note,
-    depth: number,
-    ancestors: string[],
-    scope: 'tree' | 'bookmarks' = 'tree'
-  ): React.JSX.Element => {
-    const isTree = scope === 'tree'
+  // Study children render their app icon; custom note emoji win over the
+  // default page icon.
+  const renderTree = (note: Note, depth: number, ancestors: string[]): React.JSX.Element => {
     const studyType = parseStudyChild(splitHidden(note.content).body)?.type ?? null
+    const noteEmoji = note.emoji?.trim() ?? ''
     const NoteIcon =
       studyType === 'flashcards'
         ? CardsIcon
@@ -847,10 +855,10 @@ function Sidebar(): React.JSX.Element {
     const kids = (graph.children.get(note.id) ?? []).filter(
       (kid) => !ancestors.includes(kid.id) && matchesQuery(kid)
     )
-    const isOpen = (isTree ? expandedIds : bookmarkExpandedIds).has(note.id)
-    const hint = isTree && depth === 0 && dropHint?.id === note.id ? dropHint : null
+    const isOpen = expandedIds.has(note.id)
+    const hint = depth === 0 && dropHint?.id === note.id ? dropHint : null
     const dragAttrs =
-      isTree && depth === 0
+      depth === 0
         ? {
             draggable: true as const,
             onDragStart: (event: React.DragEvent<HTMLLIElement>): void => {
@@ -887,17 +895,17 @@ function Sidebar(): React.JSX.Element {
             }
           }
         : {}
-    const renaming = isTree && renamingNoteId === note.id
+    const renaming = renamingNoteId === note.id
     return (
       <li
-        key={`${scope}-${note.id}`}
+        key={note.id}
         {...dragAttrs}
-        className={`sidebar__note${draggingId === note.id && isTree && depth === 0 ? ' sidebar__note--dragging' : ''}${hint ? (hint.before ? ' sidebar__note--drop-before' : ' sidebar__note--drop-after') : ''}${isTree && dropNoteId === note.id ? ' is-drop-target' : ''}`}
+        className={`sidebar__note${draggingId === note.id && depth === 0 ? ' sidebar__note--dragging' : ''}${hint ? (hint.before ? ' sidebar__note--drop-before' : ' sidebar__note--drop-after') : ''}${dropNoteId === note.id ? ' is-drop-target' : ''}`}
       >
         <div
-          data-note-row={isTree ? note.id : undefined}
+          data-note-row={note.id}
           className={`sidebar__row sidebar__row--note${
-            isTree && activeNoteId === note.id ? ' is-active' : ''
+            activeNoteId === note.id ? ' is-active' : ''
           }`}
           onContextMenu={(event) => {
             if (renamingNoteId === note.id) return
@@ -915,7 +923,7 @@ function Sidebar(): React.JSX.Element {
                   ? `Collapse ${note.title || 'Untitled'}`
                   : `Expand ${note.title || 'Untitled'}`
               }
-              onClick={() => (isTree ? toggleExpand(note.id) : toggleBookmarkExpand(note.id))}
+              onClick={() => toggleExpand(note.id)}
             >
               <ChevronDownIcon size={20} />
             </button>
@@ -943,7 +951,13 @@ function Sidebar(): React.JSX.Element {
               onClick={() => openNoteInCurrentTab(note.id)}
               title={note.title ? note.title : 'Untitled'}
             >
-              <NoteIcon size={15} />
+              {noteEmoji ? (
+                <span className="note-emoji" aria-hidden="true">
+                  {noteEmoji}
+                </span>
+              ) : (
+                <NoteIcon size={15} />
+              )}
               <span className="sidebar__label">{note.title.trim() || 'Untitled'}</span>
             </button>
           )}
@@ -971,7 +985,7 @@ function Sidebar(): React.JSX.Element {
                 <PlusIcon size={15} />
               </button>
             )}
-            {!(isTree && renamingNoteId === note.id) && (
+            {!(renamingNoteId === note.id) && (
               <button
                 type="button"
                 className="sidebar__icon-btn sidebar__icon-btn--danger"
@@ -986,7 +1000,7 @@ function Sidebar(): React.JSX.Element {
         </div>
         {kids.length > 0 && isOpen && (
           <ul className="sidebar__notes sidebar__notes--nested">
-            {kids.map((kid) => renderTree(kid, depth + 1, [...ancestors, note.id], scope))}
+            {kids.map((kid) => renderTree(kid, depth + 1, [...ancestors, note.id]))}
           </ul>
         )}
       </li>
@@ -1224,6 +1238,39 @@ function Sidebar(): React.JSX.Element {
       >
         <TodaySection />
 
+        {favoriteNotes.length > 0 && (
+          <div className="sidebar__favorites" role="group" aria-label="Favorites">
+            {favoriteNotes.map((note) => {
+              const label = note.title.trim() || 'Untitled'
+              const space = spaces.find((s) => s.id === note.spaceId)
+              const emoji = note.emoji?.trim() ?? ''
+              const isCurrent = activeTab?.noteId === note.id
+              return (
+                <button
+                  key={note.id}
+                  type="button"
+                  className={`sidebar__fav${isCurrent ? ' is-active' : ''}`}
+                  title={`${label}${space ? ` · ${space.name}` : ''}`}
+                  aria-label={`${label}${isCurrent ? ', open' : ''}`}
+                  onClick={() => openFavorite(note)}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    openMenuAt(note.id, event.clientX, event.clientY)
+                  }}
+                >
+                  {emoji ? (
+                    <span className="sidebar__fav-emoji" aria-hidden="true">
+                      {emoji}
+                    </span>
+                  ) : (
+                    <FileTextIcon size={22} />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
         <div className="sidebar__section">
           <div className="sidebar__section-head">
             {activeSpace ? (
@@ -1288,19 +1335,6 @@ function Sidebar(): React.JSX.Element {
                 )
               ) : (
                 <>
-                  {bookmarkRoots.length > 0 && (
-                    <div className="sidebar__section-block" aria-label="Bookmarks">
-                      <div className="sidebar__section-head">
-                        <span className="sidebar__section-title sidebar__bookmark-title">
-                          <BookmarkIcon size={12} />
-                          Bookmarks
-                        </span>
-                      </div>
-                      <ul className="sidebar__notes">
-                        {bookmarkRoots.map((note) => renderTree(note, 0, [], 'bookmarks'))}
-                      </ul>
-                    </div>
-                  )}
                   {spaceSections.map((section) => renderSection(section))}
                   {ungrouped.length === 0 && spaceSections.length === 0 ? (
                     <p className="sidebar__empty">No notes yet — create one.</p>
@@ -1320,7 +1354,13 @@ function Sidebar(): React.JSX.Element {
         </div>
       </div>
 
-      {(menu || childMenu || spaceMenu || spaceItemMenu || spaceEditor || trashOpen) && (
+      {(menu ||
+        childMenu ||
+        spaceMenu ||
+        spaceItemMenu ||
+        spaceEditor ||
+        noteIconEditor ||
+        trashOpen) && (
         <div
           className="note-menu__backdrop"
           aria-hidden="true"
@@ -1330,6 +1370,7 @@ function Sidebar(): React.JSX.Element {
             setSpaceMenu(null)
             setSpaceItemMenu(null)
             setSpaceEditor(null)
+            setNoteIconEditor(null)
             setTrashOpen(false)
           }}
           onContextMenu={(event) => {
@@ -1339,6 +1380,7 @@ function Sidebar(): React.JSX.Element {
             setSpaceMenu(null)
             setSpaceItemMenu(null)
             setSpaceEditor(null)
+            setNoteIconEditor(null)
             setTrashOpen(false)
           }}
         />
@@ -1472,7 +1514,7 @@ function Sidebar(): React.JSX.Element {
             >
               <span className="space-editor__dot" aria-hidden="true" />
             </button>
-            {SPACE_EMOJIS.map((emoji) => (
+            {ICON_EMOJIS.map((emoji) => (
               <button
                 key={emoji}
                 type="button"
@@ -1550,6 +1592,81 @@ function Sidebar(): React.JSX.Element {
           </div>
         </div>
       )}
+      {noteIconEditor &&
+        (() => {
+          const target = notes.find((n) => n.id === noteIconEditor.noteId)
+          if (!target) return null
+          const label = target.title.trim() || 'Untitled'
+          const draft = noteIconEmoji.trim()
+          return (
+            <div
+              className="space-editor"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Icon for ${label}`}
+            >
+              <div className="space-editor__head">
+                <span className="space-editor__glyph" aria-hidden="true">
+                  {draft || <FileTextIcon size={20} />}
+                </span>
+                <span className="space-editor__note-label" title={label}>
+                  {label}
+                </span>
+              </div>
+              <div className="space-editor__emojis" role="group" aria-label="Choose an icon">
+                <button
+                  type="button"
+                  className={`space-editor__emoji space-editor__emoji--none${draft === '' ? ' is-active' : ''}`}
+                  aria-label="Default page icon"
+                  aria-pressed={draft === ''}
+                  title="Default page icon"
+                  onClick={() => setNoteIconEmoji('')}
+                >
+                  <FileTextIcon size={16} />
+                </button>
+                {ICON_EMOJIS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className={`space-editor__emoji${draft === emoji ? ' is-active' : ''}`}
+                    aria-label={emoji}
+                    aria-pressed={draft === emoji}
+                    onClick={() => setNoteIconEmoji(emoji)}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+              <input
+                className="space-editor__custom"
+                value={noteIconEmoji}
+                placeholder="Or type an emoji (empty for default)"
+                aria-label="Custom emoji"
+                maxLength={8}
+                onChange={(event) => setNoteIconEmoji(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') saveNoteIcon()
+                }}
+              />
+              <div className="space-editor__actions">
+                <button
+                  type="button"
+                  className="space-editor__btn"
+                  onClick={() => setNoteIconEditor(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="space-editor__btn space-editor__btn--primary"
+                  onClick={saveNoteIcon}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          )
+        })()}
       {childMenu &&
         (() => {
           const target = notes.find((n) => n.id === childMenu.noteId)
@@ -1643,12 +1760,21 @@ function Sidebar(): React.JSX.Element {
               <button
                 type="button"
                 className="note-menu__item"
+                onClick={() => openNoteIconEditor(target)}
+              >
+                <FileTextIcon size={14} />
+                Change icon
+              </button>
+              <button
+                type="button"
+                className="note-menu__item"
                 onClick={() => {
                   setMenu(null)
                   toggleBookmark(target.id)
                 }}
               >
-                {isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+                <BookmarkIcon size={14} />
+                {isBookmarked ? 'Remove from Favorites' : 'Add to Favorites'}
               </button>
               {!isStudyChild && (
                 <>
@@ -1837,7 +1963,13 @@ function Sidebar(): React.JSX.Element {
             ) : (
               trashed.map((note) => (
                 <div key={note.id} className="rail-trash-row" title={noteLabel(note)}>
-                  <FileTextIcon size={13} />
+                  {note.emoji?.trim() ? (
+                    <span className="note-emoji" aria-hidden="true">
+                      {note.emoji.trim()}
+                    </span>
+                  ) : (
+                    <FileTextIcon size={13} />
+                  )}
                   <span className="rail-trash-row__title">{noteLabel(note)}</span>
                   <span className="rail-trash-row__days">
                     {daysLeft(note.deletedAt ?? nowMs, nowMs)}

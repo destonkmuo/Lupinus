@@ -160,6 +160,7 @@ function TabSwitcher(): React.JSX.Element | null {
           {ordered.map((tab, index) => {
             const note = notes.find((n) => n.id === tab.noteId)
             const label = note?.title.trim() || 'Untitled'
+            const emoji = note?.emoji?.trim() ?? ''
             const preview = snippetFor(note?.content ?? '')
             const isActive =
               (activeNav === null || !isInlineNav(activeNav)) && tab.id === activeTabId
@@ -171,7 +172,13 @@ function TabSwitcher(): React.JSX.Element | null {
                   onMouseEnter={() => setSelected(index)}
                   onClick={() => commit(index)}
                 >
-                  <FileTextIcon size={16} />
+                  {emoji ? (
+                    <span className="note-emoji" aria-hidden="true">
+                      {emoji}
+                    </span>
+                  ) : (
+                    <FileTextIcon size={16} />
+                  )}
                   <span className="switcher__text">
                     <span className="switcher__label">
                       {label}

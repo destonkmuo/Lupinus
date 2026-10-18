@@ -427,8 +427,8 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
           <button
             type="button"
             className={`icon-btn${isBookmarked ? ' is-active' : ''}`}
-            title={isBookmarked ? 'Remove bookmark' : 'Bookmark this note'}
-            aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this note'}
+            title={isBookmarked ? 'Remove from Favorites' : 'Add to Favorites'}
+            aria-label={isBookmarked ? 'Remove from Favorites' : 'Add to Favorites'}
             aria-pressed={isBookmarked}
             onClick={() => toggleBookmark(note.id)}
           >

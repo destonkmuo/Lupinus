@@ -335,6 +335,22 @@ body {
   display: block;
 }
 
+/* Custom page emoji standing in for a note icon (tabs, sidebar rows, trash). */
+.note-emoji {
+  display: inline-block;
+  line-height: 1;
+  font-size: 14px;
+  text-align: center;
+}
+
+.rail-trash-row .note-emoji {
+  font-size: 13px;
+}
+
+.switcher__row .note-emoji {
+  font-size: 16px;
+}
+
 .tab__dot {
   flex: none;
   width: 7px;
@@ -551,6 +567,73 @@ body {
 .sidebar__status--inline {
   margin: 0 2px 0 6px;
   -webkit-app-region: no-drag;
+}
+
+/* Arc-style favorites: tiles for bookmarked notes, sitting right under the
+   Today card. `auto-fit` collapses empty tracks, so a short row (fewer than
+   four favorites) stretches to fill the sidebar. Three rows of tiles fit;
+   anything past that scrolls. Clicking a tile swaps to the note's space and
+   opens it; a right-click opens the full note actions menu. */
+.sidebar__favorites {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+  gap: 6px;
+  /* Left inset matches the Today card and search field above. */
+  margin: 0 0 10px 4px;
+  padding: 0 2px;
+  /* 3 rows of 54px tiles + 2 gaps. */
+  max-height: 174px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ink), 0.16) transparent;
+}
+
+.sidebar__favorites::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar__favorites::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+  background-color: rgba(var(--ink), 0.14);
+}
+
+.sidebar__favorites::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar__fav {
+  display: grid;
+  place-items: center;
+  height: 54px;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: rgba(var(--ink), 0.06);
+  color: var(--ev-c-text-2);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sidebar__fav:hover {
+  background: rgba(var(--ink), 0.1);
+  transform: translateY(-1px);
+}
+
+.sidebar__fav.is-active {
+  border-color: rgba(var(--ink), 0.18);
+  background: rgba(var(--ink), 0.09);
+}
+
+.sidebar__fav-emoji {
+  display: block;
+  line-height: 1;
+  font-size: 24px;
 }
 
 .sidebar__spacebar {
@@ -861,6 +944,18 @@ body {
 
 .space-editor__name:focus {
   border-color: rgba(106, 176, 255, 0.45);
+}
+
+/* Note icon editor: the title replaces the editable name field. */
+.space-editor__note-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ev-c-text-1);
 }
 
 .space-editor__emojis {
@@ -1267,6 +1362,9 @@ body {
 .sidebar__today-body {
   display: grid;
   grid-template-rows: 1fr;
+  /* Cap the list so a busy day scrolls instead of pushing the notes section
+     (and everything below) off the sidebar. */
+  max-height: 240px;
   opacity: 1;
   transition:
     grid-template-rows 260ms cubic-bezier(0.32, 0.72, 0, 1),
@@ -1279,8 +1377,26 @@ body {
 }
 
 .sidebar__today-body-inner {
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ink), 0.16) transparent;
+}
+
+.sidebar__today-body-inner::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar__today-body-inner::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+  background-color: rgba(var(--ink), 0.14);
+}
+
+.sidebar__today-body-inner::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .sidebar__today-body-inner > * {
@@ -1660,7 +1776,7 @@ button.sidebar__section-title:hover {
   background: linear-gradient(180deg, transparent 0%, rgba(106, 176, 255, 0.06) 100%);
 }
 
-/* Grouping block headers (Bookmarks, Trash). */
+/* Grouping block headers (custom note sections). */
 .sidebar__section-block {
   margin-top: 12px;
 }
@@ -1807,12 +1923,6 @@ button.sidebar__section-title:hover {
   font: inherit;
   font-size: 13px;
   user-select: text;
-}
-
-.sidebar__bookmark-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 
 /* Row action menu (rename / bookmark / new tab / delete). */

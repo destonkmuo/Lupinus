@@ -168,7 +168,9 @@ function TabBar(): React.JSX.Element {
   const renderTab = (tab: Tab): React.JSX.Element => {
     // Sidebar pages never take tabs; floating windows leave the note lit.
     const isActive = noteVisible && tab.id === activeTabId
-    const label = notes.find((n) => n.id === tab.noteId)?.title.trim() || 'Untitled'
+    const note = notes.find((n) => n.id === tab.noteId)
+    const label = note?.title.trim() || 'Untitled'
+    const emoji = note?.emoji?.trim() ?? ''
     const hint = dropHint?.id === tab.id ? dropHint : null
 
     return (
@@ -210,7 +212,13 @@ function TabBar(): React.JSX.Element {
           title={label}
           onClick={() => setActiveTab(tab.id)}
         >
-          <FileTextIcon size={14} />
+          {emoji ? (
+            <span className="note-emoji" aria-hidden="true">
+              {emoji}
+            </span>
+          ) : (
+            <FileTextIcon size={14} />
+          )}
           <span className="tab__label">{label}</span>
         </button>
         <button

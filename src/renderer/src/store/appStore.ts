@@ -47,6 +47,8 @@ export interface Note {
   deletedAt: number | null
   /** Owning note space. Missing only in legacy vault data. */
   spaceId?: string
+  /** Custom page icon (emoji). Empty/missing = the default page icon. */
+  emoji?: string
 }
 
 export interface NoteSpace {
@@ -307,6 +309,7 @@ interface AppState {
   emptyTrash: () => void
   createNote: (title?: string, sectionId?: string | null, spaceId?: string) => string
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'content'>>) => void
+  setNoteEmoji: (id: string, emoji: string) => void
   deleteNote: (id: string) => void
   initVault: (force?: boolean) => Promise<void>
   refreshVault: () => Promise<void>
@@ -625,7 +628,8 @@ function blankNote(): Note {
     fileName: '',
     createdAt: now,
     updatedAt: now,
-    deletedAt: null
+    deletedAt: null,
+    emoji: ''
   }
 }
 
@@ -1667,6 +1671,12 @@ export const useAppStore = create<AppState>()(
           })
         }))
       },
+      setNoteEmoji: (id, emoji) =>
+        set((state) => ({
+          // An icon swap isn't a content edit: updatedAt stays put so the
+          // note doesn't jump in recency-sorted lists.
+          notes: state.notes.map((n) => (n.id === id ? { ...n, emoji: emoji.trim() } : n))
+        })),
       deleteNote: (id) => {
         // Trash, not destroy: the record keeps its order slot so restore
         // lands it back in place. initVault auto-purges trash older
@@ -2474,6 +2484,7 @@ export const useAppStore = create<AppState>()(
         const spaceIds = new Set(spaces.map((space) => space.id))
         const notes = (saved.notes ?? []).map((note) => ({
           ...note,
+          emoji: typeof note.emoji === 'string' ? note.emoji.trim() : '',
           spaceId: note.spaceId && spaceIds.has(note.spaceId) ? note.spaceId : (spaces[0]?.id ?? '')
         }))
         const noteIds = new Set(notes.map((n) => n.id))
