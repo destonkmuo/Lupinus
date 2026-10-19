@@ -18,7 +18,8 @@ import {
   MindmapIcon,
   QuizIcon,
   MoreIcon,
-  BookmarkIcon
+  BookmarkIcon,
+  ChevronRightIcon
 } from '../components/icons'
 import { parseWikiLinks, resolveWikiTarget } from '../notes'
 import { useAppStore, type ImageLayout } from '../store/appStore'
@@ -395,12 +396,12 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         <nav className="note__crumbs" aria-label="Note hierarchy">
           {crumbs.map((crumb, index) => {
             const last = index === crumbs.length - 1
-            const label = `> ${crumb.title}`
             return (
               <span key={crumb.id} className="note__crumb-wrap">
+                <ChevronRightIcon size={13} className="note__crumb-sep" aria-hidden="true" />
                 {last ? (
                   <span className="note__crumb note__crumb--current" aria-current="page">
-                    {label}
+                    {crumb.title}
                   </span>
                 ) : (
                   <button
@@ -409,7 +410,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
                     title={crumb.title}
                     onClick={() => openNoteInCurrentTab(crumb.id)}
                   >
-                    {label}
+                    {crumb.title}
                   </button>
                 )}
               </span>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { isInlineNav, NAV_BY_KEY } from '../nav'
-import { buildNoteGraph, orderedNotes } from '../notes'
+import { buildNoteGraph, orderedNotes, type NoteGraph } from '../notes'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import { addHiddenPage, splitHidden } from '../subpages'
 import { importDroppedPicture } from '../images'
@@ -20,7 +20,9 @@ import {
   bookmarkToken,
   useAppStore,
   type NavKey,
-  type Note
+  type Note,
+  type NoteDivider,
+  type NoteSection
 } from '../store/appStore'
 import {
   CalendarIcon,
@@ -97,9 +99,7 @@ function favoriteToken(item: FavoriteItem): string {
 /** Horizontal swipe distance (px) that commits a space switch. */
 const SWIPE_PX = 55
 /** Quiet gap (ms) that marks the end of one swipe gesture. */
-const SWIPE_GAP_MS = 100
-/** Space-swap slide duration (ms); mirrors the CSS. */
-const SWAP_MS = 240
+const SWIPE_GAP_MS = 50
 
 /**
  * Sidebar pages float above the notes: clicking the open page's entry again
@@ -297,11 +297,15 @@ function Sidebar(): React.JSX.Element {
   const moveNote = useAppStore((state) => state.moveNote)
   const noteSections = useAppStore((state) => state.noteSections)
   const noteSection = useAppStore((state) => state.noteSection)
+  const noteDividers = useAppStore((state) => state.noteDividers)
   const createSection = useAppStore((state) => state.createSection)
   const createDivider = useAppStore((state) => state.createDivider)
+  const moveDivider = useAppStore((state) => state.moveDivider)
+  const deleteDivider = useAppStore((state) => state.deleteDivider)
   const renameSection = useAppStore((state) => state.renameSection)
   const deleteSection = useAppStore((state) => state.deleteSection)
   const moveSection = useAppStore((state) => state.moveSection)
+  const setSectionOrder = useAppStore((state) => state.setSectionOrder)
   const setNoteSection = useAppStore((state) => state.setNoteSection)
   const restoreNote = useAppStore((state) => state.restoreNote)
   const destroyNote = useAppStore((state) => state.destroyNote)
@@ -320,6 +324,16 @@ function Sidebar(): React.JSX.Element {
   const [sectionDropHint, setSectionDropHint] = useState<{ id: string; before: boolean } | null>(
     null
   )
+  const [dividerDraggingId, setDividerDraggingId] = useState<string | null>(null)
+  const [dividerDropHint, setDividerDropHint] = useState<{ id: string; before: boolean } | null>(
+    null
+  )
+  const [selectedDividerId, setSelectedDividerId] = useState<string | null>(null)
+  const [dividerMenu, setDividerMenu] = useState<{
+    dividerId: string
+    x: number
+    y: number
+  } | null>(null)
   const [noteOverSection, setNoteOverSection] = useState<string | null>(null)
   const [dropNoteId, setDropNoteId] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ noteId: string; x: number; y: number } | null>(null)
@@ -406,22 +420,68 @@ function Sidebar(): React.JSX.Element {
     const at = clampMenu(x, y)
     setMenu({ noteId, ...at })
   }
+
+  // Drop side for a grid tile: above the row's middle means "before", and
+  // within the same row the left half also means "before".
+  const favoriteDropBefore = (event: React.DragEvent<HTMLButtonElement>): boolean => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (event.clientY < rect.top + rect.height / 2) return true
+    return event.clientY < rect.bottom && event.clientX < rect.left + rect.width / 2
+  }
+
+  const favoriteDragProps = (
+    token: string
+  ): {
+    draggable: true
+    onDragStart: (event: React.DragEvent<HTMLButtonElement>) => void
+    onDragEnd: () => void
+    onDragOver: (event: React.DragEvent<HTMLButtonElement>) => void
+    onDragLeave: () => void
+    onDrop: (event: React.DragEvent<HTMLButtonElement>) => void
+  } => ({
+    draggable: true,
+    onDragStart: (event) => {
+      favDragRef.current = token
+      setFavDragging(token)
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('text/plain', token)
+    },
+    onDragEnd: () => {
+      favDragRef.current = null
+      setFavDragging(null)
+      setFavDropHint(null)
+    },
+    onDragOver: (event) => {
+      if (!favDragRef.current || favDragRef.current === token) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      setFavDropHint({ token, before: favoriteDropBefore(event) })
+    },
+    onDragLeave: () => setFavDropHint((hint) => (hint?.token === token ? null : hint)),
+    onDrop: (event) => {
+      event.preventDefault()
+      const dragToken = favDragRef.current
+      favDragRef.current = null
+      setFavDragging(null)
+      setFavDropHint(null)
+      if (!dragToken || dragToken === token) return
+      moveBookmark(dragToken, token, favoriteDropBefore(event))
+    }
+  })
   const [renamingNoteId, setRenamingNoteId] = useState<string | null>(null)
   const [renameNoteDraft, setRenameNoteDraft] = useState('')
   const [resizing, setResizing] = useState(false)
   const dragIdRef = useRef<string | null>(null)
   const sectionDragRef = useRef<string | null>(null)
+  const dividerDragRef = useRef<string | null>(null)
   const asideRef = useRef<HTMLElement>(null)
   const spaceCarouselRef = useRef<HTMLDivElement>(null)
   const spaceDragRef = useRef<string | null>(null)
-  const paneRef = useRef<HTMLDivElement>(null)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   // One swipe gesture = one switch: accumulate horizontal deltas, fire once
   // past the threshold, then swallow the rest of the burst (trackpad momentum)
   // until a short gap marks the next gesture.
   const swipeRef = useRef({ accum: 0, fired: false, lastAt: 0 })
-  // The outgoing space's frozen markup, shown sliding out during a swap.
-  const [swap, setSwap] = useState<{ html: string; dir: 'next' | 'prev' } | null>(null)
   const resizeStartRef = useRef({ x: 0, width: 0 })
 
   useEffect(() => {
@@ -451,22 +511,30 @@ function Sidebar(): React.JSX.Element {
     note.title.toLowerCase().includes(needle) ||
     note.content.toLowerCase().includes(needle)
 
-  // Outgoing `[[links]]` per note (deduped, self-links dropped).
-  // Top level shows roots only: a note with a parent lives nested under it,
-  // never beside it. While searching, fall back to a flat match list so
-  // results are never hidden inside collapsed parents.
-  const liveNotes = useMemo(
-    () =>
-      notes.filter((note) => !note.deletedAt && (note.spaceId ?? spaces[0]?.id) === activeSpaceId),
-    [notes, spaces, activeSpaceId]
-  )
-  const graph = useMemo(
-    () => buildNoteGraph(orderedNotes(liveNotes, noteOrder)),
-    [liveNotes, noteOrder]
-  )
-  const visibleNotes = (needle ? orderedNotes(liveNotes, noteOrder) : graph.roots).filter(
-    matchesQuery
-  )
+  // Every space stays mounted and laid out side by side, so switching is a
+  // horizontal slide of the whole track rather than a freeze/snapshot swap.
+  // Outgoing `[[links]]` per note (deduped, self-links dropped). Top level
+  // shows roots only: a note with a parent lives nested under it, never beside
+  // it. While searching, fall back to a flat match list so results are never
+  // hidden inside collapsed parents.
+  const spaceViews = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    const views = new Map<string, { graph: NoteGraph<Note>; visible: Note[] }>()
+    for (const space of spaces) {
+      const live = notes.filter(
+        (note) => !note.deletedAt && (note.spaceId ?? spaces[0]?.id) === space.id
+      )
+      const graph = buildNoteGraph(orderedNotes(live, noteOrder))
+      const visible = (needle ? orderedNotes(live, noteOrder) : graph.roots).filter(
+        (note) =>
+          !needle ||
+          note.title.toLowerCase().includes(needle) ||
+          note.content.toLowerCase().includes(needle)
+      )
+      views.set(space.id, { graph, visible })
+    }
+    return views
+  }, [spaces, notes, noteOrder, query])
   // Favorites are global (every space, plus the rail pages), in bookmark order.
   // Pages come straight from the nav registry; notes resolve against the vault
   // and drop out when trashed/deleted.
@@ -528,15 +596,35 @@ function Sidebar(): React.JSX.Element {
     sectionDragRef.current = null
     setSectionDraggingId(null)
     setSectionDropHint(null)
+    setDropHint(null)
   }
 
-  // Valid section for a note within the active space, or null when ungrouped
+  const clearDividerDrag = (): void => {
+    dividerDragRef.current = null
+    setDividerDraggingId(null)
+    setDividerDropHint(null)
+    setDropHint(null)
+  }
+
+  /** Notes that belong to a divider container ('' = top level). */
+  const notesInContainer = (container: string, spaceId: string = activeSpaceId): Note[] =>
+    (spaceViews.get(spaceId)?.visible ?? []).filter((note) =>
+      container === ''
+        ? sectionOf(note.id, spaceId) === null
+        : sectionOf(note.id, spaceId) === container
+    )
+
+  /** Append order for a divider at the end of a container. */
+  const endOrder = (container: string, spaceId: string = activeSpaceId): number =>
+    notesInContainer(container, spaceId).length + 0.5
+
+  // Valid section for a note within its space, or null when ungrouped
   // (unknown or cross-space ids fall out, so a note never goes missing).
-  const sectionOf = (noteId: string): string | null => {
+  const sectionOf = (noteId: string, spaceId: string = activeSpaceId): string | null => {
     const id = noteSection[noteId]
     if (id === undefined) return null
     const section = noteSections.find((s) => s.id === id)
-    return section && section.spaceId === activeSpaceId ? id : null
+    return section && section.spaceId === spaceId ? id : null
   }
 
   const positionAbove = (event: React.DragEvent<HTMLElement>): boolean => {
@@ -547,6 +635,24 @@ function Sidebar(): React.JSX.Element {
   const positionFromEvent = (event: React.DragEvent<HTMLLIElement>): boolean => {
     const rect = event.currentTarget.getBoundingClientRect()
     return event.clientY - rect.top < rect.height / 2
+  }
+
+  /** Sections reserve the first slots in a space, so notes rank after them. */
+  const topLevelBase = (spaceId: string = activeSpaceId): number =>
+    noteSections.filter((section) => section.spaceId === spaceId).length
+
+  /** Rank for a section dropped above/below a top-level note. */
+  const sectionRankAtNote = (spaceId: string, noteIndex: number, before: boolean): number =>
+    topLevelBase(spaceId) + noteIndex + (before ? -0.5 : 0.5)
+
+  /** Rank that lands a section after every top-level item in a space. */
+  const sectionEndRank = (spaceId: string): number => {
+    const sections = noteSections.filter((section) => section.spaceId === spaceId)
+    const ungrouped = (spaceViews.get(spaceId)?.visible ?? []).filter(
+      (note) => sectionOf(note.id, spaceId) === null
+    )
+    const noteEnd = topLevelBase(spaceId) + ungrouped.length
+    return Math.max(noteEnd, ...sections.map((section) => section.order)) + 0.5
   }
 
   const onNoteDrop = (event: React.DragEvent<HTMLLIElement>, noteId: string): void => {
@@ -615,27 +721,53 @@ function Sidebar(): React.JSX.Element {
     }
   }
 
-  const onListDrop = (event: React.DragEvent<HTMLUListElement>): void => {
+  const onListDrop = (event: React.DragEvent<HTMLUListElement>, spaceId: string): void => {
     // Only fires for empty list space; note drops stop propagation above.
     // (Stop here too so the pane catch-all below doesn't double-handle it.)
     event.preventDefault()
     event.stopPropagation()
+    if (sectionDragRef.current) {
+      const dragId = sectionDragRef.current
+      clearSectionDrag()
+      setSectionOrder(dragId, sectionEndRank(spaceId))
+      return
+    }
+    if (dividerDragRef.current) {
+      const dragId = dividerDragRef.current
+      clearDividerDrag()
+      moveDivider(dragId, '', endOrder(''))
+      return
+    }
     ungroupDrop()
   }
 
   // Open background anywhere in the notes pane (gaps between sections and
   // padding): rows, dividers, and lists stop propagation when they handle a
   // drop, so reaching here means genuinely open space.
-  const onPaneDrop = (event: React.DragEvent<HTMLDivElement>): void => {
+  const onPaneDrop = (event: React.DragEvent<HTMLDivElement>, spaceId: string): void => {
     event.preventDefault()
     event.stopPropagation()
+    if (sectionDragRef.current) {
+      const dragId = sectionDragRef.current
+      clearSectionDrag()
+      setSectionOrder(dragId, sectionEndRank(spaceId))
+      return
+    }
+    if (dividerDragRef.current) {
+      const dragId = dividerDragRef.current
+      clearDividerDrag()
+      moveDivider(dragId, '', endOrder(''))
+      return
+    }
     ungroupDrop()
   }
 
   // Drop a note onto a section: file it there, pinned after that section's
   // last root so it lands inside the group.
   const assignToSection = (dragId: string, sectionId: string | null): void => {
-    const peers = visibleNotes.filter((n) => n.id !== dragId && sectionOf(n.id) === sectionId)
+    const peers = (spaceViews.get(activeSpaceId)?.visible ?? []).filter(
+      (n) => n.id !== dragId && sectionOf(n.id) === sectionId
+    )
     setNoteSection(dragId, sectionId)
     if (peers.length > 0) moveNote(dragId, peers[peers.length - 1].id, false)
     else moveNote(dragId, null, false)
@@ -646,11 +778,16 @@ function Sidebar(): React.JSX.Element {
     event.stopPropagation()
     const secDrag = sectionDragRef.current
     const noteDrag = dragIdRef.current
+    const divDrag = dividerDragRef.current
     clearDrag()
     clearSectionDrag()
-    // Divider-on-divider reorders sections; note-on-divider files the note.
+    clearDividerDrag()
+    // Divider-on-divider reorders sections; a line divider dropped on the
+    // header joins the section; note-on-divider files the note.
     if (secDrag && secDrag !== sectionId) {
       moveSection(secDrag, sectionId, positionAbove(event))
+    } else if (divDrag) {
+      moveDivider(divDrag, sectionId, endOrder(sectionId))
     } else if (noteDrag) {
       assignToSection(noteDrag, sectionId)
     }
@@ -660,8 +797,11 @@ function Sidebar(): React.JSX.Element {
     event.preventDefault()
     event.stopPropagation()
     const noteDrag = dragIdRef.current
+    const divDrag = dividerDragRef.current
     clearDrag()
-    if (noteDrag) assignToSection(noteDrag, sectionId)
+    clearDividerDrag()
+    if (divDrag) moveDivider(divDrag, sectionId, endOrder(sectionId))
+    else if (noteDrag) assignToSection(noteDrag, sectionId)
   }
 
   const newSection = (): void => {
@@ -672,9 +812,12 @@ function Sidebar(): React.JSX.Element {
   }
 
   // A plain line divider: no title, no rename — just a draggable separator
-  // that notes can be filed under to form groups.
+  // that can sit between notes, inside a section, or among a note's children.
   const newDivider = (): void => {
-    createDivider()
+    const id = createDivider('')
+    // Drop it after the last top-level note so it's visible immediately.
+    moveDivider(id, '', endOrder(''))
+    setSelectedDividerId(id)
   }
 
   const commitRename = (): void => {
@@ -790,7 +933,8 @@ function Sidebar(): React.JSX.Element {
       !spaceMenu &&
       !spaceItemMenu &&
       !spaceEditor &&
-      !trashOpen
+      !trashOpen &&
+      !dividerMenu
     )
       return
     const onKey = (event: KeyboardEvent): void => {
@@ -802,14 +946,48 @@ function Sidebar(): React.JSX.Element {
         setSpaceItemMenu(null)
         setSpaceEditor(null)
         setTrashOpen(false)
+        setDividerMenu(null)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [menu, navMenu, childMenu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen])
+  }, [menu, navMenu, childMenu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen, dividerMenu])
+
+  // A selected divider can be removed with Backspace/Delete. Ignore the key
+  // while typing so inline renames and search keep their normal behavior.
+  useEffect(() => {
+    if (!selectedDividerId) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Backspace' && event.key !== 'Delete') return
+      const active = document.activeElement as HTMLElement | null
+      if (
+        active &&
+        (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)
+      )
+        return
+      event.preventDefault()
+      deleteDivider(selectedDividerId)
+      setSelectedDividerId(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedDividerId, deleteDivider])
+
+  // Clicking outside the selected divider clears the selection.
+  useEffect(() => {
+    if (!selectedDividerId) return
+    const onDown = (event: PointerEvent): void => {
+      const target = event.target as HTMLElement
+      if (!target.closest(`[data-divider-row="${selectedDividerId}"]`)) {
+        setSelectedDividerId(null)
+      }
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [selectedDividerId])
 
   const expandAll = (): void => {
-    setExpandedIds(new Set(visibleNotes.map((n) => n.id)))
+    setExpandedIds(new Set((spaceViews.get(activeSpaceId)?.visible ?? []).map((n) => n.id)))
     setCollapsedIds(new Set())
   }
 
@@ -894,11 +1072,117 @@ function Sidebar(): React.JSX.Element {
   }
 
   // Notion-style tree: a note with outgoing [[links]] expands to reveal those
+  // A plain line divider row. Selectable (Backspace removes it), draggable
+  // between notes, and a drop target for other dividers.
+  const renderDivider = (divider: NoteDivider): React.JSX.Element => {
+    const isSelected = selectedDividerId === divider.id
+    const hint = dividerDropHint?.id === divider.id ? dividerDropHint : null
+    return (
+      <li
+        key={divider.id}
+        data-divider-row={divider.id}
+        className={`sidebar__divider-row${dividerDraggingId === divider.id ? ' is-dragging' : ''}${isSelected ? ' is-selected' : ''}${hint ? (hint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
+        draggable
+        onDragStart={(event) => {
+          dividerDragRef.current = divider.id
+          setDividerDraggingId(divider.id)
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', divider.id)
+        }}
+        onDragEnd={() => clearDividerDrag()}
+        onClick={(event) => {
+          event.stopPropagation()
+          setSelectedDividerId(divider.id)
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          setSelectedDividerId(divider.id)
+          setDividerMenu({
+            dividerId: divider.id,
+            ...clampMenu(event.clientX, event.clientY, 60)
+          })
+        }}
+        onDragOver={(event) => {
+          if (dividerDragRef.current && dividerDragRef.current !== divider.id) {
+            event.preventDefault()
+            event.stopPropagation()
+            event.dataTransfer.dropEffect = 'move'
+            setDividerDropHint({ id: divider.id, before: positionAbove(event) })
+          } else if (dragIdRef.current) {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'move'
+          }
+        }}
+        onDragLeave={() =>
+          setDividerDropHint((current) => (current?.id === divider.id ? null : current))
+        }
+        onDrop={(event) => {
+          if (!dividerDragRef.current) return
+          event.preventDefault()
+          event.stopPropagation()
+          const dragId = dividerDragRef.current
+          if (dragId === divider.id) {
+            clearDividerDrag()
+            return
+          }
+          const before = positionAbove(event)
+          clearDividerDrag()
+          moveDivider(dragId, divider.container, divider.order + (before ? -0.25 : 0.25))
+        }}
+      >
+        <span className="sidebar__divider-rule" aria-hidden="true" />
+        <div className="sidebar__divider-actions">
+          <button
+            type="button"
+            className="sidebar__icon-btn sidebar__icon-btn--danger"
+            title="Delete divider"
+            aria-label="Delete divider"
+            onClick={(event) => {
+              event.stopPropagation()
+              deleteDivider(divider.id)
+              setSelectedDividerId(null)
+            }}
+          >
+            <XIcon size={13} />
+          </button>
+        </div>
+      </li>
+    )
+  }
+
+  // Interleave a container's dividers with its notes (notes rank as 0,1,2…;
+  // dividers use fractional orders so they can sit *between* notes).
+  const withDividers = (
+    container: string,
+    listNotes: Note[],
+    spaceId: string,
+    renderNote: (note: Note, index: number) => React.JSX.Element
+  ): React.JSX.Element[] => {
+    const items = listNotes.map((note, index) => ({
+      rank: index,
+      node: renderNote(note, index)
+    }))
+    for (const divider of noteDividers) {
+      if (divider.spaceId !== spaceId || divider.container !== container) continue
+      items.push({ rank: divider.order, node: renderDivider(divider) })
+    }
+    items.sort((a, b) => a.rank - b.rank)
+    return items.map((item) => item.node)
+  }
+
   // child pages nested beneath it. Only top-level rows are draggable; nested
   // rows are link views into the same flat order. `ancestors` guards cycles.
   // Study children render their app icon; custom note emoji win over the
   // default page icon.
-  const renderTree = (note: Note, depth: number, ancestors: string[]): React.JSX.Element => {
+  const renderTree = (
+    note: Note,
+    depth: number,
+    ancestors: string[],
+    container: string,
+    index: number,
+    spaceId: string
+  ): React.JSX.Element => {
     const studyType = parseStudyChild(splitHidden(note.content).body)?.type ?? null
     const noteEmoji = note.emoji?.trim() ?? ''
     const NoteIcon =
@@ -909,11 +1193,12 @@ function Sidebar(): React.JSX.Element {
           : studyType === 'quiz'
             ? QuizIcon
             : FileTextIcon
-    const kids = (graph.children.get(note.id) ?? []).filter(
+    const graph = spaceViews.get(spaceId)?.graph
+    const kids = (graph?.children.get(note.id) ?? []).filter(
       (kid) => !ancestors.includes(kid.id) && matchesQuery(kid)
     )
     const isOpen = expandedIds.has(note.id)
-    const hint = depth === 0 && dropHint?.id === note.id ? dropHint : null
+    const hint = dropHint?.id === note.id ? dropHint : null
     const dragAttrs =
       depth === 0
         ? {
@@ -930,7 +1215,12 @@ function Sidebar(): React.JSX.Element {
             onDragOver: (event: React.DragEvent<HTMLLIElement>): void => {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'move'
-              if (dragIdRef.current && dragIdRef.current !== note.id) {
+              if (dividerDragRef.current) {
+                setDropHint({ id: note.id, before: positionFromEvent(event) })
+              } else if (sectionDragRef.current && !needle && container === '') {
+                setSectionDropHint(null)
+                setDropHint({ id: note.id, before: positionFromEvent(event) })
+              } else if (dragIdRef.current && dragIdRef.current !== note.id) {
                 setDropHint({ id: note.id, before: positionFromEvent(event) })
               }
               if (isPictureDragTypes(event.dataTransfer.types ?? [])) {
@@ -939,6 +1229,30 @@ function Sidebar(): React.JSX.Element {
             },
             onDragLeave: () => setDropNoteId(null),
             onDrop: (event: React.DragEvent<HTMLLIElement>): void => {
+              // A section dropped on a top-level row takes that note's slot,
+              // letting sections sit between and around notes.
+              if (sectionDragRef.current && !needle && container === '') {
+                event.preventDefault()
+                event.stopPropagation()
+                const dragId = sectionDragRef.current
+                const before = positionFromEvent(event)
+                clearSectionDrag()
+                setSectionOrder(dragId, sectionRankAtNote(spaceId, index, before))
+                setDropNoteId(null)
+                return
+              }
+              // A line divider dropped on a row lands before/after that note
+              // in the same container (top level, section, or children).
+              if (dividerDragRef.current) {
+                event.preventDefault()
+                event.stopPropagation()
+                const dragId = dividerDragRef.current
+                const before = positionFromEvent(event)
+                clearDividerDrag()
+                moveDivider(dragId, container, index + (before ? -0.5 : 0.5))
+                setDropNoteId(null)
+                return
+              }
               // Internal reorders (note/section drags) keep working when the
               // platform reports no types; anything carrying files or URLs
               // from outside the app is a picture drop.
@@ -951,7 +1265,26 @@ function Sidebar(): React.JSX.Element {
               setDropNoteId(null)
             }
           }
-        : {}
+        : {
+            // Nested rows aren't reorderable themselves, but they're still
+            // drop targets for a dragged line divider.
+            onDragOver: (event: React.DragEvent<HTMLLIElement>): void => {
+              if (!dividerDragRef.current) return
+              event.preventDefault()
+              event.stopPropagation()
+              event.dataTransfer.dropEffect = 'move'
+              setDropHint({ id: note.id, before: positionFromEvent(event) })
+            },
+            onDrop: (event: React.DragEvent<HTMLLIElement>): void => {
+              if (!dividerDragRef.current) return
+              event.preventDefault()
+              event.stopPropagation()
+              const dragId = dividerDragRef.current
+              const before = positionFromEvent(event)
+              clearDividerDrag()
+              moveDivider(dragId, container, index + (before ? -0.5 : 0.5))
+            }
+          }
     const renaming = renamingNoteId === note.id
     return (
       <li
@@ -1056,8 +1389,21 @@ function Sidebar(): React.JSX.Element {
           </div>
         </div>
         {kids.length > 0 && isOpen && (
-          <ul className="sidebar__notes sidebar__notes--nested">
-            {kids.map((kid) => renderTree(kid, depth + 1, [...ancestors, note.id]))}
+          <ul
+            className="sidebar__notes sidebar__notes--nested"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              if (!dividerDragRef.current) return
+              event.preventDefault()
+              event.stopPropagation()
+              const dragId = dividerDragRef.current
+              clearDividerDrag()
+              moveDivider(dragId, note.id, kids.length + 0.5)
+            }}
+          >
+            {withDividers(note.id, kids, spaceId, (kid, kidIndex) =>
+              renderTree(kid, depth + 1, [...ancestors, note.id], note.id, kidIndex, spaceId)
+            )}
           </ul>
         )}
       </li>
@@ -1066,20 +1412,19 @@ function Sidebar(): React.JSX.Element {
 
   // One custom section: draggable divider header plus its notes. Dividers
   // reorder against each other; notes dropped on the header or its list get
-  // filed into the section. A plain line divider (`divider: true`) shows a
-  // slim rule instead of a titled header.
-  const renderSection = (section: {
-    id: string
-    title: string
-    divider?: boolean
-  }): React.JSX.Element => {
-    const roots = visibleNotes.filter((note) => sectionOf(note.id) === section.id)
-    const isLine = section.divider === true
-    const collapsed = !isLine && collapsedIds.has(section.id)
-    const renaming = !isLine && renamingId === section.id
+  // filed into the section.
+  const renderSection = (
+    section: { id: string; title: string },
+    spaceId: string
+  ): React.JSX.Element => {
+    const roots = (spaceViews.get(spaceId)?.visible ?? []).filter(
+      (note) => sectionOf(note.id, spaceId) === section.id
+    )
+    const collapsed = collapsedIds.has(section.id)
+    const renaming = renamingId === section.id
     const hint = sectionDropHint?.id === section.id ? sectionDropHint : null
     return (
-      <div key={section.id} className="sidebar__section-block">
+      <li key={section.id} className="sidebar__section-block">
         <div
           draggable={!renaming}
           onDragStart={(event) => {
@@ -1093,7 +1438,7 @@ function Sidebar(): React.JSX.Element {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'move'
               setSectionDropHint({ id: section.id, before: positionAbove(event) })
-            } else if (dragIdRef.current) {
+            } else if (dragIdRef.current || dividerDragRef.current) {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'move'
               setNoteOverSection(section.id)
@@ -1101,22 +1446,9 @@ function Sidebar(): React.JSX.Element {
           }}
           onDragLeave={() => setNoteOverSection(null)}
           onDrop={(event) => onSectionDrop(event, section.id)}
-          className={`sidebar__divider${isLine ? ' sidebar__divider--line' : ''}${sectionDraggingId === section.id ? ' sidebar__divider--dragging' : ''}${hint ? (hint.before ? ' sidebar__divider--drop-before' : ' sidebar__divider--drop-after') : ''}${noteOverSection === section.id ? ' is-note-target' : ''}`}
+          className={`sidebar__divider${sectionDraggingId === section.id ? ' sidebar__divider--dragging' : ''}${hint ? (hint.before ? ' sidebar__divider--drop-before' : ' sidebar__divider--drop-after') : ''}${noteOverSection === section.id ? ' is-note-target' : ''}`}
         >
-          {isLine ? (
-            <>
-              <span className="sidebar__divider-rule" aria-hidden="true" />
-              <button
-                type="button"
-                className="sidebar__icon-btn sidebar__icon-btn--danger"
-                title="Remove divider"
-                aria-label="Remove divider"
-                onClick={() => deleteSection(section.id)}
-              >
-                <XIcon size={13} />
-              </button>
-            </>
-          ) : renaming ? (
+          {renaming ? (
             <input
               className="sidebar__divider-input"
               autoFocus
@@ -1133,7 +1465,7 @@ function Sidebar(): React.JSX.Element {
             <button
               type="button"
               className="sidebar__divider-main"
-              title="Collapse · double-click to rename · drag to reorder"
+              title="Collapse · double-click to rename · drag to reorder or place between notes"
               onClick={() => toggleCollapsed(section.id)}
               onDoubleClick={() => {
                 setRenameDraft(section.title)
@@ -1147,28 +1479,24 @@ function Sidebar(): React.JSX.Element {
               <span className="sidebar__label">{section.title}</span>
             </button>
           )}
-          {!isLine && (
-            <>
-              <button
-                type="button"
-                className="sidebar__icon-btn"
-                title={`Add note to ${section.title}`}
-                aria-label={`Add note to ${section.title}`}
-                onClick={() => createNote(undefined, section.id)}
-              >
-                <PlusIcon size={14} />
-              </button>
-              <button
-                type="button"
-                className="sidebar__icon-btn sidebar__icon-btn--danger"
-                title={`Delete section ${section.title}`}
-                aria-label={`Delete section ${section.title}`}
-                onClick={() => confirmDeleteSection(section.id, section.title)}
-              >
-                <TrashIcon size={14} />
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            className="sidebar__icon-btn"
+            title={`Add note to ${section.title}`}
+            aria-label={`Add note to ${section.title}`}
+            onClick={() => createNote(undefined, section.id)}
+          >
+            <PlusIcon size={14} />
+          </button>
+          <button
+            type="button"
+            className="sidebar__icon-btn sidebar__icon-btn--danger"
+            title={`Delete section ${section.title}`}
+            aria-label={`Delete section ${section.title}`}
+            onClick={() => confirmDeleteSection(section.id, section.title)}
+          >
+            <TrashIcon size={14} />
+          </button>
         </div>
         {!collapsed && (
           <ul
@@ -1176,16 +1504,49 @@ function Sidebar(): React.JSX.Element {
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => onSectionListDrop(event, section.id)}
           >
-            {roots.map((note) => renderTree(note, 0, []))}
+            {withDividers(section.id, roots, spaceId, (note, noteIndex) =>
+              renderTree(note, 0, [], section.id, noteIndex, spaceId)
+            )}
           </ul>
         )}
-      </div>
+      </li>
     )
   }
 
-  // Dividers are independent per space: only the active space's show.
-  const spaceSections = noteSections.filter((section) => section.spaceId === activeSpaceId)
-  const ungrouped = visibleNotes.filter((note) => sectionOf(note.id) === null)
+  // Sections, top-level notes, and line dividers share one ranked list so a
+  // section can sit above, below, or between notes.
+  const renderTopLevel = (
+    spaceId: string,
+    sections: NoteSection[],
+    ungrouped: Note[]
+  ): React.JSX.Element => {
+    const base = sections.length
+    const items = [
+      ...sections.map((section) => ({
+        rank: section.order,
+        node: renderSection(section, spaceId)
+      })),
+      ...ungrouped.map((note, noteIndex) => ({
+        rank: base + noteIndex,
+        node: renderTree(note, 0, [], '', noteIndex, spaceId)
+      })),
+      ...noteDividers
+        .filter((divider) => divider.spaceId === spaceId && divider.container === '')
+        .map((divider) => ({ rank: base + divider.order, node: renderDivider(divider) }))
+    ]
+    if (items.length === 0) return <p className="sidebar__empty">No notes yet — create one.</p>
+    items.sort((a, b) => a.rank - b.rank)
+    return (
+      <ul
+        className="sidebar__notes"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => onListDrop(event, spaceId)}
+      >
+        {items.map((item) => item.node)}
+      </ul>
+    )
+  }
+
   const activeSpaceIndex = spaces.findIndex((space) => space.id === activeSpaceId)
   const activeSpace = activeSpaceIndex >= 0 ? spaces[activeSpaceIndex] : null
   const activeSpaceNumber = activeSpaceIndex >= 0 ? activeSpaceIndex + 1 : 0
@@ -1194,18 +1555,9 @@ function Sidebar(): React.JSX.Element {
   const notesTitle =
     activeSpace != null ? activeSpace.name.trim() || `Space ${activeSpaceNumber}` : 'Notes'
 
-  // Clear the sliding-out pane once its exit animation has run.
-  useEffect(() => {
-    if (!swap) return
-    const timer = window.setTimeout(() => setSwap(null), SWAP_MS + 60)
-    return () => window.clearTimeout(timer)
-  }, [swap])
-
-  // Switch to a space, freezing the current pane so it can slide out.
-  const goToSpace = (id: string, dir: 'next' | 'prev'): void => {
+  // Switch to a space; the track's transform reveals its pane.
+  const goToSpace = (id: string): void => {
     if (id === activeSpaceId || !spaces.some((space) => space.id === id)) return
-    const html = paneRef.current?.innerHTML ?? ''
-    setSwap({ html, dir })
     setActiveSpace(id)
   }
 
@@ -1215,7 +1567,7 @@ function Sidebar(): React.JSX.Element {
     const index = spaces.findIndex((space) => space.id === activeSpaceId)
     if (index < 0) return
     const next = spaces[(index + step + spaces.length) % spaces.length]
-    if (next) goToSpace(next.id, step > 0 ? 'next' : 'prev')
+    if (next) goToSpace(next.id)
   }
 
   // Trackpad two-finger horizontal swipe.
@@ -1321,6 +1673,14 @@ function Sidebar(): React.JSX.Element {
         {favoriteItems.length > 0 && (
           <div className="sidebar__favorites" role="group" aria-label="Favorites">
             {favoriteItems.map((item) => {
+              const token = favoriteToken(item)
+              const dragClass = `${favDragging === token ? ' is-dragging' : ''}${
+                favDropHint?.token === token
+                  ? favDropHint.before
+                    ? ' is-drop-before'
+                    : ' is-drop-after'
+                  : ''
+              }`
               if (item.kind === 'nav') {
                 const Icon = item.icon
                 const isCurrent = activeNav === item.key
@@ -1328,7 +1688,7 @@ function Sidebar(): React.JSX.Element {
                   <button
                     key={`nav:${item.key}`}
                     type="button"
-                    className={`sidebar__fav${isCurrent ? ' is-active' : ''}`}
+                    className={`sidebar__fav${isCurrent ? ' is-active' : ''}${dragClass}`}
                     title={item.label}
                     aria-label={`${item.label}${isCurrent ? ', open' : ''}`}
                     onClick={() => openFavorite(item)}
@@ -1336,8 +1696,9 @@ function Sidebar(): React.JSX.Element {
                       event.preventDefault()
                       setNavMenu({ key: item.key, x: event.clientX, y: event.clientY })
                     }}
+                    {...favoriteDragProps(token)}
                   >
-                    <Icon size={22} />
+                    <Icon size={18} />
                   </button>
                 )
               }
@@ -1350,7 +1711,7 @@ function Sidebar(): React.JSX.Element {
                 <button
                   key={`note:${note.id}`}
                   type="button"
-                  className={`sidebar__fav${isCurrent ? ' is-active' : ''}`}
+                  className={`sidebar__fav${isCurrent ? ' is-active' : ''}${dragClass}`}
                   title={`${label}${space ? ` · ${space.name}` : ''}`}
                   aria-label={`${label}${isCurrent ? ', open' : ''}`}
                   onClick={() => openFavorite(item)}
@@ -1358,13 +1719,14 @@ function Sidebar(): React.JSX.Element {
                     event.preventDefault()
                     openMenuAt(note.id, event.clientX, event.clientY)
                   }}
+                  {...favoriteDragProps(token)}
                 >
                   {emoji ? (
                     <span className="sidebar__fav-emoji" aria-hidden="true">
                       {emoji}
                     </span>
                   ) : (
-                    <FileTextIcon size={22} />
+                    <FileTextIcon size={18} />
                   )}
                 </button>
               )
@@ -1406,50 +1768,46 @@ function Sidebar(): React.JSX.Element {
           </div>
 
           <div className="sidebar__space-swap">
-            {swap && (
-              <div
-                className={`sidebar__space-exit is-out-${swap.dir}`}
-                aria-hidden="true"
-                dangerouslySetInnerHTML={{ __html: swap.html }}
-              />
-            )}
             <div
-              key={activeSpaceId}
-              ref={paneRef}
-              className={`sidebar__space-pane is-in-${swap ? swap.dir : 'none'}${
-                draggingId ? ' is-dragging' : ''
-              }`}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={onPaneDrop}
+              className="sidebar__space-track"
+              style={{
+                transform: `translateX(-${activeSpaceIndex < 0 ? 0 : activeSpaceIndex * 100}%)`
+              }}
             >
-              {needle ? (
-                visibleNotes.length === 0 ? (
-                  <p className="sidebar__empty">No notes match your search.</p>
-                ) : (
-                  <ul
-                    className="sidebar__notes"
+              {(spaces.length > 0 ? spaces : [{ id: '', name: '', emoji: '' }]).map((space) => {
+                const visible = spaceViews.get(space.id)?.visible ?? []
+                const sections = noteSections.filter((section) => section.spaceId === space.id)
+                const ungrouped = visible.filter((note) => sectionOf(note.id, space.id) === null)
+                const isActive = space.id === activeSpaceId
+                return (
+                  <div
+                    key={space.id}
+                    className={`sidebar__space-pane${draggingId && isActive ? ' is-dragging' : ''}`}
+                    aria-hidden={isActive ? undefined : true}
+                    inert={!isActive}
                     onDragOver={(event) => event.preventDefault()}
-                    onDrop={onListDrop}
+                    onDrop={(event) => onPaneDrop(event, space.id)}
                   >
-                    {visibleNotes.map((note) => renderTree(note, 0, []))}
-                  </ul>
+                    {needle ? (
+                      visible.length === 0 ? (
+                        <p className="sidebar__empty">No notes match your search.</p>
+                      ) : (
+                        <ul
+                          className="sidebar__notes"
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => onListDrop(event, space.id)}
+                        >
+                          {visible.map((note, noteIndex) =>
+                            renderTree(note, 0, [], '', noteIndex, space.id)
+                          )}
+                        </ul>
+                      )
+                    ) : (
+                      renderTopLevel(space.id, sections, ungrouped)
+                    )}
+                  </div>
                 )
-              ) : (
-                <>
-                  {spaceSections.map((section) => renderSection(section))}
-                  {ungrouped.length === 0 && spaceSections.length === 0 ? (
-                    <p className="sidebar__empty">No notes yet — create one.</p>
-                  ) : (
-                    <ul
-                      className="sidebar__notes"
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={onListDrop}
-                    >
-                      {ungrouped.map((note) => renderTree(note, 0, []))}
-                    </ul>
-                  )}
-                </>
-              )}
+              })}
             </div>
           </div>
         </div>
@@ -1462,7 +1820,8 @@ function Sidebar(): React.JSX.Element {
         spaceItemMenu ||
         spaceEditor ||
         noteIconEditor ||
-        trashOpen) && (
+        trashOpen ||
+        dividerMenu) && (
         <div
           className="note-menu__backdrop"
           aria-hidden="true"
@@ -1475,6 +1834,7 @@ function Sidebar(): React.JSX.Element {
             setSpaceEditor(null)
             setNoteIconEditor(null)
             setTrashOpen(false)
+            setDividerMenu(null)
           }}
           onContextMenu={(event) => {
             event.preventDefault()
@@ -1486,9 +1846,37 @@ function Sidebar(): React.JSX.Element {
             setSpaceEditor(null)
             setNoteIconEditor(null)
             setTrashOpen(false)
+            setDividerMenu(null)
           }}
         />
       )}
+      {dividerMenu &&
+        (() => {
+          const target = noteDividers.find((divider) => divider.id === dividerMenu.dividerId)
+          if (!target) return null
+          return (
+            <div
+              className="note-menu note-menu--fixed"
+              role="menu"
+              aria-label="Divider actions"
+              style={{ left: dividerMenu.x, top: dividerMenu.y }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                className="note-menu__item note-menu__item--danger"
+                onClick={() => {
+                  deleteDivider(target.id)
+                  setSelectedDividerId(null)
+                  setDividerMenu(null)
+                }}
+              >
+                <TrashIcon size={14} />
+                Delete divider
+              </button>
+            </div>
+          )
+        })()}
       {spaceMenu && (
         <div
           className="note-menu note-menu--fixed"
@@ -2024,7 +2412,7 @@ function Sidebar(): React.JSX.Element {
                 title={space.emoji.trim() ? `${space.emoji} ${space.name}` : space.name}
                 aria-label={`${space.name}${space.id === activeSpaceId ? ', current space' : ''}`}
                 aria-pressed={space.id === activeSpaceId}
-                onClick={() => goToSpace(space.id, index > activeSpaceIndex ? 'next' : 'prev')}
+                onClick={() => goToSpace(space.id)}
                 onDragStart={(event) => {
                   spaceDragRef.current = space.id
                   setSpaceDraggingId(space.id)

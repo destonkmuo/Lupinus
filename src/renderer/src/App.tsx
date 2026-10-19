@@ -364,7 +364,15 @@ function App(): React.JSX.Element {
   // instead so a fresh vault never shows a blank shell.
   const showFloat = activeNav !== null && !isInlineNav(activeNav) && activeTab !== null
   if (activeNav !== null && (isInlineNav(activeNav) || !activeTab)) {
-    content = <Content active={activeNav} />
+    // Full-size nav pages have no tab bar, so give them their own title-bar
+    // drag strip. Without it macOS can't treat double-clicks up here as
+    // title-bar double-clicks (fullscreen/zoom), which note tabs get for free.
+    content = (
+      <div className="navshell">
+        <div className="navshell__drag" aria-hidden="true" />
+        <Content active={activeNav} />
+      </div>
+    )
   } else if (!activeTab) {
     content = (
       <main className="empty">

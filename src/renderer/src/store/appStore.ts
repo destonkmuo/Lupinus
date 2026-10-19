@@ -215,6 +215,8 @@ interface AppState {
   renamingNoteId: string | null
   /** noteId -> section id. Missing (or stale) entries render ungrouped. */
   noteSection: Record<string, string>
+  /** Plain line dividers, positioned per container (top level, section, note). */
+  noteDividers: NoteDivider[]
   tabs: Tab[]
   activeTabId: string | null
   /**
@@ -314,10 +316,14 @@ interface AppState {
   moveTab: (dragId: string, targetId: string | null, before: boolean) => void
   moveNote: (dragId: string, targetId: string | null, before: boolean) => void
   createSection: (title?: string, spaceId?: string) => string
-  createDivider: (spaceId?: string) => string
+  createDivider: (container?: string, spaceId?: string) => string
+  moveDivider: (id: string, container: string, order: number) => void
+  deleteDivider: (id: string) => void
   renameSection: (id: string, title: string) => void
   deleteSection: (id: string) => void
   moveSection: (dragId: string, targetId: string | null, before: boolean) => void
+  /** Place a section at an explicit top-level rank (notes rank as integers). */
+  setSectionOrder: (id: string, order: number) => void
   setNoteSection: (noteId: string, sectionId: string | null) => void
   toggleBookmark: (target: Bookmark) => void
   /** Reorder favorites. Tokens come from `bookmarkToken`. */
@@ -395,8 +401,29 @@ export interface NoteSection {
   title: string
   /** Owning space: sections are independent per space. */
   spaceId: string
-  /** A plain, untitled line divider grouping the notes filed under it. */
-  divider?: boolean
+  /**
+   * Position among the space's top-level items. Notes rank as integers
+   * (offset past the sections), so fractional values can sit between notes.
+   */
+  order: number
+}
+
+/**
+ * A plain, draggable line divider in the sidebar. Unlike a section (which
+ * groups the notes filed under a titled header), a divider is a lightweight
+ * separator that can sit anywhere: between top-level notes, inside a section,
+ * or among a note's children.
+ */
+export interface NoteDivider {
+  id: string
+  spaceId: string
+  /**
+   * Where the divider lives: '' for the top-level (ungrouped) list, a section
+   * id, or a note id (its children list).
+   */
+  container: string
+  /** Fractional position among the container's items (notes count as integers). */
+  order: number
 }
 
 /** Google-style tab group colors. */
@@ -952,6 +979,7 @@ export const useAppStore = create<AppState>()(
       noteOrder: [],
       noteSections: [],
       noteSection: {},
+      noteDividers: [],
       bookmarks: DEFAULT_BOOKMARKS.map((bookmark) => ({ ...bookmark })),
       bookmarksSeeded: true,
       imageLayout: {},
@@ -1115,6 +1143,7 @@ export const useAppStore = create<AppState>()(
             activeSpaceId: state.activeSpaceId === id ? replacementId : state.activeSpaceId,
             noteSections: state.noteSections.filter((s) => s.spaceId !== id),
             noteSection,
+            noteDividers: state.noteDividers.filter((divider) => divider.spaceId !== id),
             notes: state.notes.map((note) =>
               note.spaceId === id ? { ...note, spaceId: replacementId } : note
             ),
@@ -1551,24 +1580,46 @@ export const useAppStore = create<AppState>()(
           return { noteOrder: [...without.slice(0, to), dragId, ...without.slice(to)] }
         }),
       createSection: (title?: string, spaceId?: string) => {
+        const owner = spaceId ?? get().activeSpaceId
+        const order =
+          get()
+            .noteSections.filter((s) => s.spaceId === owner)
+            .reduce((max, s) => Math.max(max, s.order), -1) + 0.5
         const section: NoteSection = {
           id: uid(),
           title: (title ?? '').trim() || 'New section',
-          spaceId: spaceId ?? get().activeSpaceId
+          spaceId: owner,
+          order
         }
         set((state) => ({ noteSections: [...state.noteSections, section] }))
         return section.id
       },
-      createDivider: (spaceId?: string) => {
-        const section: NoteSection = {
+      createDivider: (container?: string, spaceId?: string) => {
+        // Append by default: one past the last divider in the container.
+        // Notes rank as integers, so `count + 0.5` sits after the final note.
+        const target = container ?? ''
+        const divider: NoteDivider = {
           id: uid(),
-          title: '',
           spaceId: spaceId ?? get().activeSpaceId,
-          divider: true
+          container: target,
+          order:
+            get()
+              .noteDividers.filter((d) => d.container === target)
+              .reduce((max, d) => Math.max(max, d.order), -1) + 1
         }
-        set((state) => ({ noteSections: [...state.noteSections, section] }))
-        return section.id
+        set((state) => ({ noteDividers: [...state.noteDividers, divider] }))
+        return divider.id
       },
+      moveDivider: (id, container, order) =>
+        set((state) => ({
+          noteDividers: state.noteDividers.map((divider) =>
+            divider.id === id ? { ...divider, container, order } : divider
+          )
+        })),
+      deleteDivider: (id) =>
+        set((state) => ({
+          noteDividers: state.noteDividers.filter((divider) => divider.id !== id)
+        })),
       renameSection: (id, title) =>
         set((state) => ({
           noteSections: state.noteSections.map((s) =>
@@ -1583,22 +1634,30 @@ export const useAppStore = create<AppState>()(
           }
           return {
             noteSections: state.noteSections.filter((s) => s.id !== id),
-            noteSection: remaining
+            noteSection: remaining,
+            noteDividers: state.noteDividers.filter((divider) => divider.container !== id)
           }
         }),
       moveSection: (dragId, targetId, before) =>
         set((state) => {
           if (dragId === targetId) return {}
-          const from = state.noteSections.findIndex((s) => s.id === dragId)
-          if (from < 0) return {}
-          const dragged = state.noteSections[from]
-          const without = state.noteSections.filter((s) => s.id !== dragId)
-          if (!targetId) return { noteSections: [...without, dragged] }
-          let to = without.findIndex((s) => s.id === targetId)
-          if (to < 0) return { noteSections: [...without, dragged] }
-          if (!before) to += 1
-          return { noteSections: [...without.slice(0, to), dragged, ...without.slice(to)] }
+          const dragged = state.noteSections.find((s) => s.id === dragId)
+          if (!dragged) return {}
+          const target = state.noteSections.find((s) => s.id === targetId)
+          // No target (or a stale one): append after every item in the space.
+          const order = target
+            ? target.order + (before ? -0.5 : 0.5)
+            : state.noteSections
+                .filter((s) => s.spaceId === dragged.spaceId)
+                .reduce((max, s) => Math.max(max, s.order), -1) + 0.5
+          return {
+            noteSections: state.noteSections.map((s) => (s.id === dragId ? { ...s, order } : s))
+          }
         }),
+      setSectionOrder: (id, order) =>
+        set((state) => ({
+          noteSections: state.noteSections.map((s) => (s.id === id ? { ...s, order } : s))
+        })),
       setNoteSection: (noteId, sectionId) =>
         set((state) => {
           if (sectionId && !state.noteSections.some((s) => s.id === sectionId)) return {}
@@ -1825,6 +1884,7 @@ export const useAppStore = create<AppState>()(
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, keep),
             noteSection,
+            noteDividers: state.noteDividers.filter((divider) => !ids.has(divider.container)),
             bookmarks: state.bookmarks.filter(
               (bookmark) => bookmark.kind !== 'note' || !ids.has(bookmark.id)
             ),
@@ -1863,6 +1923,7 @@ export const useAppStore = create<AppState>()(
             tabRecency: state.tabRecency.filter((t) => kept.has(t)),
             ...pruneHistory(state.tabHistory, state.historyIndex, kept),
             noteSection,
+            noteDividers: state.noteDividers.filter((divider) => divider.container !== id),
             bookmarks: state.bookmarks.filter(
               (bookmark) => bookmark.kind !== 'note' || bookmark.id !== id
             ),
@@ -2420,6 +2481,7 @@ export const useAppStore = create<AppState>()(
         notes: state.notes,
         noteOrder: state.noteOrder,
         noteSections: state.noteSections,
+        noteDividers: state.noteDividers,
         noteSection: state.noteSection,
         bookmarks: state.bookmarks,
         bookmarksSeeded: state.bookmarksSeeded,
@@ -2488,6 +2550,7 @@ export const useAppStore = create<AppState>()(
             | 'activeSpaceId'
             | 'noteOrder'
             | 'noteSections'
+            | 'noteDividers'
             | 'noteSection'
             | 'bookmarks'
             | 'bookmarksSeeded'
@@ -2592,19 +2655,45 @@ export const useAppStore = create<AppState>()(
         // Sections survive restarts and belong to a space; legacy sections
         // without a space fall back to the first. Drop mappings for notes or
         // sections that no longer exist so orphans render ungrouped.
+        const spaceOrderCursor = new Map<string, number>()
         const noteSections = (saved.noteSections ?? [])
           .filter((s) => s && typeof s.id === 'string' && typeof s.title === 'string')
-          .map((s) => ({
-            id: s.id,
-            title: s.title,
-            spaceId: s.spaceId && spaceIds.has(s.spaceId) ? s.spaceId : (spaces[0]?.id ?? ''),
-            ...(s.divider ? { divider: true } : {})
-          }))
+          .map((s) => {
+            const spaceId = s.spaceId && spaceIds.has(s.spaceId) ? s.spaceId : (spaces[0]?.id ?? '')
+            // Legacy sections had no explicit position: keep them above the
+            // notes, in their saved order (notes rank after all sections).
+            const fallback = spaceOrderCursor.get(spaceId) ?? 0
+            const order = typeof s.order === 'number' ? s.order : fallback
+            spaceOrderCursor.set(spaceId, fallback + 1)
+            return { id: s.id, title: s.title, spaceId, order }
+          })
         const sectionIds = new Set(noteSections.map((s) => s.id))
         const noteSection: Record<string, string> = {}
         for (const [noteId, sectionId] of Object.entries(saved.noteSection ?? {})) {
           if (noteIds.has(noteId) && sectionIds.has(sectionId)) noteSection[noteId] = sectionId
         }
+        // Dividers survive restarts. Their container must still exist: a live
+        // note (children list), a live section, or '' for the top level.
+        const noteDividers = (saved.noteDividers ?? [])
+          .filter(
+            (divider) =>
+              divider &&
+              typeof divider.id === 'string' &&
+              typeof divider.order === 'number' &&
+              typeof divider.container === 'string' &&
+              (divider.container === '' ||
+                noteIds.has(divider.container) ||
+                sectionIds.has(divider.container))
+          )
+          .map((divider) => ({
+            id: divider.id,
+            spaceId:
+              divider.spaceId && spaceIds.has(divider.spaceId)
+                ? divider.spaceId
+                : (spaces[0]?.id ?? ''),
+            container: divider.container,
+            order: divider.order
+          }))
         // Favorites: legacy entries are bare note ids; newer ones are tagged
         // objects (`nav` pages or `note` ids). Stale entries are dropped, and a
         // fresh vault (no saved value) seeds the default rail pages.
@@ -2705,6 +2794,7 @@ export const useAppStore = create<AppState>()(
           noteOrder,
           noteSections,
           noteSection,
+          noteDividers,
           bookmarks,
           bookmarksSeeded: true,
           imageLayout,

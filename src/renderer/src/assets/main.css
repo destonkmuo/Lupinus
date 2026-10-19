@@ -55,6 +55,39 @@ body {
   }
 }
 
+/* Full-size nav views have no tab bar, so they get an invisible title-bar
+   strip. macOS only: elsewhere the native window frame already provides one.
+   The strip is short enough to clear every page's header (Calendar and the
+   SeeMO chat header pad down past it). */
+.navshell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.navshell > :not(.navshell__drag) {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.navshell__drag {
+  display: none;
+}
+
+:root.is-mac .navshell__drag {
+  display: block;
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 10;
+  height: 28px;
+  -webkit-app-region: drag;
+}
+
 /* Split view: two panes side by side, right pane headed + divided. */
 .app__content--split {
   flex-direction: row;
@@ -642,10 +675,23 @@ body {
   background: rgba(var(--ink), 0.09);
 }
 
+/* Drag-to-reorder favorites. */
+.sidebar__fav.is-dragging {
+  opacity: 0.35;
+}
+
+.sidebar__fav.is-drop-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.sidebar__fav.is-drop-after {
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+
 .sidebar__fav-emoji {
   display: block;
   line-height: 1;
-  font-size: 24px;
+  font-size: 20px;
 }
 
 .sidebar__spacebar {
@@ -814,92 +860,31 @@ body {
   color: var(--ev-c-text-1);
 }
 
-/* Space swap: the outgoing space's frozen pane slides out while the incoming
-   one slides in from the direction of the swipe. */
+/* Space carousel: every space's pane is laid out in one horizontal track.
+   Switching spaces slides the track so the active pane is revealed. */
 .sidebar__space-swap {
   position: relative;
   overflow: hidden;
 }
 
+.sidebar__space-track {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+
 .sidebar__space-pane {
+  flex: 0 0 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
-.sidebar__space-exit {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  will-change: transform, opacity;
-}
-
-@keyframes space-in-next {
-  from {
-    opacity: 0;
-    transform: translateX(28px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes space-in-prev {
-  from {
-    opacity: 0;
-    transform: translateX(-28px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes space-out-next {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateX(-28px);
-  }
-}
-
-@keyframes space-out-prev {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateX(28px);
-  }
-}
-
-.sidebar__space-pane.is-in-next {
-  animation: space-in-next 240ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.sidebar__space-pane.is-in-prev {
-  animation: space-in-prev 240ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.sidebar__space-exit.is-out-next {
-  animation: space-out-next 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
-}
-
-.sidebar__space-exit.is-out-prev {
-  animation: space-out-prev 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .sidebar__space-pane.is-in-next,
-  .sidebar__space-pane.is-in-prev,
-  .sidebar__space-exit.is-out-next,
-  .sidebar__space-exit.is-out-prev {
-    animation: none;
+  .sidebar__space-track {
+    transition: none;
   }
 }
 
@@ -1849,41 +1834,72 @@ button.sidebar__section-title:hover {
   background: var(--hover);
 }
 
-/* Plain line divider: a slim, untitled rule that groups notes. */
-.sidebar__divider--line {
-  gap: 8px;
-  padding: 6px 4px;
+/* Plain line divider: a slim, selectable rule that spans the notes list. */
+.sidebar__divider-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 13px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  list-style: none;
+  cursor: grab;
 }
 
-.sidebar__divider--line:hover {
-  background: transparent;
+.sidebar__divider-row:active {
+  cursor: grabbing;
+}
+
+.sidebar__divider-row.is-dragging {
+  opacity: 0.35;
+}
+
+.sidebar__divider-row.is-selected {
+  background: rgba(var(--ink), 0.07);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.sidebar__divider-row.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.sidebar__divider-row.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .sidebar__divider-rule {
   flex: 1;
   height: 1px;
   border-radius: 1px;
-  background: rgba(var(--ink), 0.16);
+  background: rgba(var(--ink), 0.18);
   transition: background-color 160ms ease;
 }
 
-.sidebar__divider--line:hover .sidebar__divider-rule,
-.sidebar__divider--line:focus-within .sidebar__divider-rule {
-  background: rgba(var(--ink), 0.34);
+.sidebar__divider-row:hover .sidebar__divider-rule {
+  background: rgba(var(--ink), 0.4);
 }
 
-.sidebar__divider--line.is-note-target .sidebar__divider-rule {
+.sidebar__divider-row.is-selected .sidebar__divider-rule {
   background: var(--accent);
-  height: 2px;
 }
 
-.sidebar__divider--line .sidebar__icon-btn {
+.sidebar__divider-actions {
+  position: absolute;
+  right: 2px;
+  display: flex;
   opacity: 0;
+  transition: opacity 140ms ease;
 }
 
-.sidebar__divider--line:hover .sidebar__icon-btn,
-.sidebar__divider--line:focus-within .sidebar__icon-btn {
+.sidebar__divider-row:hover .sidebar__divider-actions,
+.sidebar__divider-row.is-selected .sidebar__divider-actions,
+.sidebar__divider-row:focus-within .sidebar__divider-actions {
   opacity: 1;
+}
+
+.sidebar__divider-actions .sidebar__icon-btn {
+  background: var(--sidebar-bg, rgba(20, 22, 28, 0.9));
 }
 
 .sidebar__divider-main {
@@ -2582,7 +2598,7 @@ button.sidebar__status:hover {
 }
 
 /* Breadcrumb hierarchy (parent → child → this note), left-aligned. Every
-   crumb is prefixed with `>`, so the bar reads `> root > … > parent > this`.
+   crumb is led by a chevron icon, including the root and the current note.
    Ancestors navigate in place; the current note is plain text. */
 .note__crumbs {
   display: flex;
@@ -3565,6 +3581,11 @@ button.note__crumb:hover {
   font-size: clamp(46px, 6vw, 78px);
   line-height: 1.02;
   letter-spacing: -0.035em;
+  /* The gradient only paints inside the box, so give descenders (the "g" in
+     "Good evening") room or their tails get clipped. The negative margin
+     keeps the subtitle where it was. */
+  padding-bottom: 0.14em;
+  margin-bottom: -0.14em;
   background: linear-gradient(93deg, #ffffff 28%, #9cc4ff 68%, #3f8fff 100%);
   background-size: 170% 100%;
   -webkit-background-clip: text;
@@ -4222,7 +4243,8 @@ body.is-orb {
   align-items: center;
   gap: 8px;
   flex: none;
-  padding: 12px 14px;
+  /* Top padding clears the invisible window drag strip (see .navshell). */
+  padding: 28px 14px 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -4561,7 +4583,8 @@ body.is-orb {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 20px 24px;
+  /* Top padding clears the invisible window drag strip (see .navshell). */
+  padding: 28px 24px 20px;
   overflow: hidden;
 }
 
@@ -8272,12 +8295,15 @@ div.home__today-row:hover {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 10px 0;
+  padding: 6px 0;
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 18px;
   background: color-mix(in srgb, var(--sidebar-bg) 88%, transparent);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.42),
+    0 3px 10px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(16px) saturate(1.3);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   pointer-events: auto;
   opacity: 0;
   visibility: hidden;
@@ -8286,6 +8312,7 @@ div.home__today-row:hover {
   transition:
     transform 320ms cubic-bezier(0.32, 0.72, 0, 1),
     opacity 200ms ease,
+    box-shadow 200ms ease,
     visibility 0s linear 320ms;
 }
 
@@ -8298,18 +8325,17 @@ div.home__today-row:hover {
     opacity 200ms ease;
 }
 
-/* macOS traffic lights float over the top-left corner: the pill starts below
-   them, aligned with the top of the sidebar search (10px pad + 24px status
-   row + 6px gap = 40px), so it never clips through the window controls. */
+/* macOS traffic lights float over the top-left corner: the pill starts just
+   below them, lined up with the top of the sidebar's search bar. */
 .is-mac .rail__bar {
-  top: 40px;
-  padding-top: 10px;
+  top: 38px;
+  padding-top: 6px;
 }
 
-/* Windows/Linux: no floating traffic lights, so the pill reaches the very top
-   and bottom of the window instead of leaving an inset gap. */
+/* Windows/Linux: no floating traffic lights, so the pill starts level with the
+   search bar and reaches the bottom of the window. */
 :root:not(.is-mac) .rail__bar {
-  top: 0;
+  top: 8px;
   bottom: 0;
 }
 
@@ -8709,7 +8735,10 @@ div.home__today-row:hover {
 }
 
 :root[data-theme='light'] .rail__bar {
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.18),
+    0 3px 10px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 :root[data-theme='light'] .rail-menu {
