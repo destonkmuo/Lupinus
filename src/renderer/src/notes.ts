@@ -1,3 +1,5 @@
+import { splitHidden } from './subpages'
+
 /**
  * Mapping between notes and vault files.
  *
@@ -132,16 +134,36 @@ export function buildNoteGraph<T extends { id: string; title: string; content: s
 ): NoteGraph<T> {
   const byId = new Map(notes.map((note) => [note.id, note]))
   const children = new Map<string, T[]>()
+  // Hidden-footer links are the explicit parent record. If a note is parented
+  // that way, ignore ordinary body `[[links]]` pointing at it; otherwise a
+  // slash-created child (hidden link + inline link in the old parent) shows up
+  // under both parents after being dragged elsewhere.
+  const hiddenTargets = new Set<string>()
+  for (const note of notes) {
+    const hidden = splitHidden(note.content).hidden
+    if (!hidden) continue
+    for (const page of hidden.pages) {
+      const id = resolveWikiTarget(page, notes)
+      if (id && id !== note.id) hiddenTargets.add(id)
+    }
+  }
   const outgoing: number[][] = notes.map((note) => {
     const seen = new Set<string>()
     const kids: T[] = []
-    for (const link of parseWikiLinks(note.content)) {
-      const id = resolveWikiTarget(link.target, notes)
-      if (!id || id === note.id || seen.has(id)) continue
+    const add = (target: string): void => {
+      const id = resolveWikiTarget(target, notes)
+      if (!id || id === note.id || seen.has(id)) return
       seen.add(id)
       const child = byId.get(id)
       if (child) kids.push(child)
     }
+    const { body, hidden } = splitHidden(note.content)
+    for (const link of parseWikiLinks(body)) {
+      const id = resolveWikiTarget(link.target, notes)
+      if (id && hiddenTargets.has(id)) continue
+      add(link.target)
+    }
+    if (hidden) for (const page of hidden.pages) add(page)
     children.set(note.id, kids)
     return kids.map((kid) => notes.indexOf(kid))
   })

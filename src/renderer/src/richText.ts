@@ -16,6 +16,7 @@
 
 import katex from 'katex'
 import { BULLET, FENCE, HEADING, ORDERED, QUOTE, RULE, TASK } from './markdown'
+import { normalizeUrl, splitLinks } from './links'
 
 export type BlockKind =
   'code' | 'rule' | 'math' | 'heading' | 'quote' | 'task' | 'bullet' | 'ordered' | 'paragraph'
@@ -39,10 +40,15 @@ export const INLINE_RE =
  * would silently rewrite the user's `->`.
  */
 
-const escapeHtml = (text: string): string =>
+export const escapeHtml = (text: string): string =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-const escapeAttr = (text: string): string => escapeHtml(text).replace(/"/g, '&quot;')
+export const escapeAttr = (text: string): string => escapeHtml(text).replace(/"/g, '&quot;')
+
+/** Hooks that let a caller customize widgets (for example real image chips). */
+export interface InlineHtmlOptions {
+  image?: (alt: string, src: string) => string | null
+}
 
 /** Classify a block by its first line, mirroring the renderer's dispatch. */
 export function blockKind(block: string): BlockKind {
@@ -71,7 +77,7 @@ function mathHtml(tex: string, display: boolean): string {
   )}" data-display="${display ? 'true' : 'false'}" contenteditable="false">${inner}</span>`
 }
 
-function tokenToHtml(token: string): string {
+function tokenToHtml(token: string, options?: InlineHtmlOptions): string {
   if (token.startsWith('`')) return `<code>${escapeHtml(token.slice(1, -1))}</code>`
   if (token.startsWith('$$')) return mathHtml(token.slice(2, -2), true)
   if (token.startsWith('$')) return mathHtml(token.slice(1, -1), false)
@@ -95,29 +101,46 @@ function tokenToHtml(token: string): string {
   if (token.startsWith('!')) {
     const link = /^!\[([^\]]*)\]\(([^)]*)\)$/.exec(token)
     if (!link) return escapeHtml(token)
+    const custom = options?.image?.(link[1], link[2])
+    if (custom) return custom
     return `<span class="md-img" data-img-alt="${escapeAttr(link[1])}" data-img-src="${escapeAttr(
       link[2]
     )}" contenteditable="false">🖼 ${escapeHtml(link[1] || link[2])}</span>`
   }
   const link = /^\[([^\]]*)\]\(([^)]*)\)$/.exec(token)
   if (link) {
-    return `<a href="#" data-href="${escapeAttr(link[2])}">${escapeHtml(link[1] || link[2])}</a>`
+    return `<a href="#" data-href="${escapeAttr(link[2])}" title="Double-click to edit · Ctrl/Cmd-click to open">${escapeHtml(link[1] || link[2])}</a>`
   }
   return escapeHtml(token)
 }
 
+/** Escape + auto-link a plain-text run (bare URLs like `x.com` included). */
+function textToHtml(text: string): string {
+  let html = ''
+  for (const part of splitLinks(text)) {
+    if (!part.value) continue
+    const href = part.url ? normalizeUrl(part.value) : undefined
+    if (part.url && href) {
+      html += `<a href="#" data-href="${escapeAttr(href)}" title="Double-click to edit · Ctrl/Cmd-click to open">${escapeHtml(part.value)}</a>`
+    } else {
+      html += escapeHtml(part.value)
+    }
+  }
+  return html
+}
+
 /** Inline markdown → editable inline HTML. */
-export function inlineToHtml(text: string): string {
+export function inlineToHtml(text: string, options?: InlineHtmlOptions): string {
   let html = ''
   let last = 0
   let match: RegExpExecArray | null
   INLINE_RE.lastIndex = 0
   while ((match = INLINE_RE.exec(text)) !== null) {
-    if (match.index > last) html += escapeHtml(text.slice(last, match.index))
-    html += tokenToHtml(match[0])
+    if (match.index > last) html += textToHtml(text.slice(last, match.index))
+    html += tokenToHtml(match[0], options)
     last = match.index + match[0].length
   }
-  if (last < text.length) html += escapeHtml(text.slice(last))
+  if (last < text.length) html += textToHtml(text.slice(last))
   return html
 }
 
@@ -192,7 +215,12 @@ function inlineElementToMarkdown(el: HTMLElement): string {
   if (tag === 'del' || tag === 's' || tag === 'strike') return `~~${inner}~~`
   if (tag === 'mark') return `==${inner}==`
   if (tag === 'code') return `\`${inner}\``
-  if (tag === 'a') return `[${inner}](${el.getAttribute('data-href') ?? ''})`
+  if (tag === 'a') {
+    // Older builds could nest anchors; unwrap them instead of serializing
+    // `[[url](url)](url)`.
+    if (el.querySelector('a')) return inner
+    return `[${inner}](${el.getAttribute('data-href') ?? ''})`
+  }
   return inner
 }
 

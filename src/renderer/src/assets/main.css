@@ -353,6 +353,13 @@ body {
   color: var(--ev-c-text-1);
 }
 
+.tab__pin {
+  flex: none;
+  display: block;
+  color: var(--accent);
+  transform: rotate(35deg);
+}
+
 .tab__label {
   flex: 1;
   position: relative;
@@ -613,28 +620,27 @@ body {
 }
 
 /* Arc-style favorites: tiles for bookmarked notes, sitting right under the
-   Today card. `auto-fit` collapses empty tracks, so a short row (fewer than
-   four favorites) stretches to fill the sidebar. Three rows of tiles fit;
-   anything past that scrolls. Clicking a tile swaps to the note's space and
-   opens it; a right-click opens the full note actions menu. */
+   Today card. They stay on one row and scroll horizontally when they outgrow
+   the sidebar (tiles grow to fill a short row, never wrap). Clicking a tile
+   swaps to the note's space and opens it; a right-click opens the full note
+   actions menu. */
 .sidebar__favorites {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   gap: 6px;
   /* Left inset matches the Today card and search field above. The top padding
      is headroom for the hover lift — the scroll container clips at its padding
      box, so without it the raised tile loses its top edge. */
   margin: 0 0 8px 4px;
   padding: 4px 2px 2px;
-  /* 3 rows of 54px tiles + 2 gaps. */
-  max-height: 178px;
-  overflow-y: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(var(--ink), 0.16) transparent;
 }
 
 .sidebar__favorites::-webkit-scrollbar {
-  width: 8px;
+  height: 8px;
 }
 
 .sidebar__favorites::-webkit-scrollbar-thumb {
@@ -651,6 +657,7 @@ body {
 .sidebar__fav {
   display: grid;
   place-items: center;
+  flex: 1 0 54px;
   height: 54px;
   min-width: 0;
   padding: 0;
@@ -726,14 +733,14 @@ body {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: var(--ev-c-text-2);
-  font-size: 15px;
+  font-size: 13px;
   /* Inactive spaces are grayed out; the active one stays full color. */
   filter: grayscale(1);
   opacity: 0.55;
@@ -753,8 +760,8 @@ body {
 
 /* Dot-mode space: plain dot, colored per space so dot-spaces stay distinct. */
 .sidebar__space-dot {
-  width: 9px;
-  height: 9px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex: none;
 }
@@ -1996,6 +2003,10 @@ button.sidebar__section-title:hover {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+.sidebar__note--drop-child {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
 .sidebar__note.is-drop-target {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
@@ -3200,6 +3211,241 @@ button.note__crumb:hover {
 
 .rblock .markdown__task input {
   cursor: pointer;
+}
+
+/* Edit-first note surface: one contenteditable document whose direct
+   children are the lines of the note. No separate edit/preview modes. */
+.blocks.note-editor {
+  display: block;
+  flex-direction: initial;
+  gap: 0;
+  min-height: 55vh;
+  padding-bottom: 60px;
+  outline: none;
+  color: var(--ev-c-text-1);
+  font-size: 15px;
+  line-height: 1.75;
+  cursor: text;
+  user-select: text;
+}
+
+.note-editor .nl {
+  position: relative;
+  display: flow-root;
+  min-height: 1.75em;
+  margin: 0 -8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transition: background-color 100ms ease;
+}
+
+.note-editor .nl:hover {
+  background: rgba(var(--ink), 0.035);
+}
+
+.note-editor .nl--heading {
+  margin-top: 12px;
+  margin-bottom: 2px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.note-editor .nl--heading:first-child {
+  margin-top: 0;
+}
+
+.note-editor .nl--h1 {
+  font-size: 1.75em;
+}
+
+.note-editor .nl--h2 {
+  font-size: 1.45em;
+}
+
+.note-editor .nl--h3 {
+  font-size: 1.22em;
+}
+
+.note-editor .nl--h4 {
+  font-size: 1.08em;
+}
+
+.note-editor .nl--h5,
+.note-editor .nl--h6 {
+  font-size: 1em;
+  color: var(--ev-c-text-2);
+}
+
+.note-editor .nl--bullet,
+.note-editor .nl--ordered,
+.note-editor .nl--task {
+  padding-left: 28px;
+}
+
+.note-editor .nl--bullet::before,
+.note-editor .nl--ordered::before {
+  position: absolute;
+  left: 10px;
+  top: 3px;
+  color: var(--ev-c-text-2);
+  pointer-events: none;
+}
+
+.note-editor .nl--bullet::before {
+  content: '•';
+}
+
+.note-editor .nl--ordered::before {
+  content: attr(data-number) '.';
+  min-width: 1.4em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.note-editor .nl--task > input[type='checkbox'] {
+  position: absolute;
+  left: 8px;
+  top: 0.52em;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.note-editor .nl--quote {
+  padding-left: 14px;
+  border-left: 3px solid rgba(var(--ink), 0.18);
+  border-radius: 0 6px 6px 0;
+  color: var(--ev-c-text-2);
+}
+
+.note-editor .nl--rule {
+  min-height: 0;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 0;
+  cursor: default;
+}
+
+.note-editor .nl--rule:hover {
+  background: transparent;
+}
+
+.note-editor .nl--rule hr {
+  height: 0;
+  margin: 0;
+  border: none;
+  border-top: 1px solid rgba(var(--ink), 0.16);
+}
+
+.note-editor .nl--math {
+  padding: 6px 0;
+  text-align: center;
+  cursor: default;
+}
+
+.note-editor .nl--math:hover {
+  background: rgba(var(--ink), 0.035);
+}
+
+.note-editor .nl--code {
+  margin-top: 6px;
+  margin-bottom: 6px;
+  padding: 0;
+  background: #161616;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  white-space: normal;
+  overflow: hidden;
+}
+
+.note-editor .nl--code:hover {
+  background: #161616;
+}
+
+/* Consecutive code lines share one visual block (and save as one fence). */
+.note-editor .nl--code:has(+ .nl--code) {
+  border-bottom-color: transparent;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.note-editor .nl--code + .nl--code {
+  margin-top: -7px;
+  border-top-color: transparent;
+  border-top-right-radius: 0;
+  border-top-left-radius: 0;
+}
+
+.note-editor .nl--code:has(+ .nl--code) .nl__code {
+  padding-bottom: 0;
+}
+
+.note-editor .nl--code + .nl--code .nl__code {
+  padding-top: 0;
+}
+
+.note-editor .nl__code {
+  display: block;
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  color: #d8d8d8;
+  font-family: 'SF Mono', ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 1.6em;
+  white-space: pre-wrap;
+  tab-size: 2;
+  outline: none;
+}
+
+.note-editor .nl[data-placeholder][data-empty='true']::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  color: var(--ev-c-text-3);
+  white-space: pre;
+  pointer-events: none;
+}
+
+.note-editor a {
+  color: var(--accent);
+  cursor: text;
+  text-decoration: none;
+}
+
+.note-editor a:hover {
+  text-decoration: underline;
+}
+
+.note-editor .md-wiki {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(106, 176, 255, 0.12);
+  color: var(--accent);
+  user-select: none;
+}
+
+.note-editor .md-img,
+.note-editor .math {
+  user-select: none;
+}
+
+.note-editor .md-img img {
+  border-radius: 8px;
+}
+
+.note-editor .math--display {
+  margin: 0;
 }
 
 /* `/` insert menu: floats under the active block, inside its row. */
@@ -5501,6 +5747,10 @@ button.cal-week__day:hover {
   animation: dlg-in 0.16s ease;
 }
 
+.link-dlg {
+  max-width: 380px;
+}
+
 @keyframes dlg-in {
   from {
     opacity: 0;
@@ -6067,6 +6317,23 @@ select.dlg__input {
   white-space: nowrap;
   font-size: 13px;
   color: var(--ev-c-text-1);
+}
+
+.cal-cals__name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(var(--ink), 0.05);
+  color: var(--ev-c-text-1);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.cal-cals__name-input:focus {
+  border-color: var(--accent);
 }
 
 .cal-cals__badge {
@@ -8787,4 +9054,40 @@ div.home__today-row:hover {
   .rail__btn.is-active::before {
     animation: none;
   }
+}
+
+/* ----------------------------------------------------------------- scrollbars */
+
+/* Scrollbars are hidden everywhere on every platform. The note's main scroll
+   region is the sole exception: it reveals a bar only while the pointer rests
+   near its right edge (see Note.tsx). */
+/* Keep the platform scrollbar properties at `auto` so the WebKit rules below
+   always win. A non-auto `scrollbar-width` would override them (and on macOS
+   could leave an overlay bar that only shows while scrolling). */
+* {
+  scrollbar-width: auto !important;
+  scrollbar-color: auto !important;
+}
+
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+
+.note__scroll.is-scrollbar-visible::-webkit-scrollbar {
+  display: block !important;
+  width: 10px !important;
+  height: 10px !important;
+}
+
+.note__scroll.is-scrollbar-visible::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.note__scroll.is-scrollbar-visible::-webkit-scrollbar-thumb {
+  border: 2px solid transparent !important;
+  border-radius: 8px !important;
+  background-clip: content-box !important;
+  background-color: rgba(var(--ink), 0.24) !important;
 }

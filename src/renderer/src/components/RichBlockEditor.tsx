@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   autoFormatBlock,
   blockKind,
@@ -10,8 +11,10 @@ import {
   type BlockKind
 } from '../richText'
 import { RULE } from '../markdown'
+import { normalizeUrl, trimUrl, urlAtEnd, urlOnly } from '../links'
 import { filteredSlash, slashToken, type ChildKind, type SlashCommand } from '../slash'
 import SlashMenu from './SlashMenu'
+import { XIcon } from './icons'
 
 /** Block-level tags that each hold their own logical markdown line. */
 const LINE_BLOCK_TAGS = new Set([
@@ -188,6 +191,13 @@ function RichBlockEditor({
   }))
   const [slash, setSlash] = useState<string | null>(null)
   const [slashSel, setSlashSel] = useState(0)
+  const [linkDialog, setLinkDialog] = useState<{
+    text: string
+    url: string
+    editing: boolean
+  } | null>(null)
+  const linkRangeRef = useRef<Range | null>(null)
+  const linkEditingRef = useRef<HTMLAnchorElement | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const caretRef = useRef<'start' | 'end' | number>(initialCaret)
   // The browser owns the DOM while typing: seeded HTML is applied only on
@@ -336,6 +346,54 @@ function RichBlockEditor({
   }, [commit])
 
   /**
+   * Turn a URL at the caret into a real link. While typing we wait for a
+   * whitespace boundary so `x.co` isn't linked before `x.com` is finished;
+   * on Enter/blur/paste the URL can end the text directly.
+   */
+  const applyAutoLink = useCallback((requireBoundary = false): boolean => {
+    const el = ref.current
+    if (!el) return false
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0 || !el.contains(sel.anchorNode)) return false
+    const anchorNode = sel.anchorNode
+    const host =
+      anchorNode instanceof HTMLElement ? anchorNode : (anchorNode?.parentElement ?? null)
+    if (host?.closest('a')) return false
+    const before = textBeforeCaret(el)
+    if (requireBoundary && !/\s$/.test(before)) return false
+    const hit = urlAtEnd(before)
+    if (!hit) return false
+    const url = trimUrl(hit.raw)
+    const href = normalizeUrl(url)
+    if (!href) return false
+    const caret = getCaretOffset(el)
+    const trailing = /\s$/.test(before) ? before.length - before.replace(/\s+$/, '').length : 0
+    const start = caret - trailing - hit.raw.length
+    const existing = rangeAtOffsets(el, start, start + hit.raw.length)
+    // Never wrap text that already lives inside a link: doing so nests anchors
+    // and serializes into `[[url](url)](url)` spaghetti.
+    const startHost =
+      existing.startContainer instanceof HTMLElement
+        ? existing.startContainer
+        : existing.startContainer.parentElement
+    if (startHost?.closest('a')) return false
+    const link = document.createElement('a')
+    link.href = '#'
+    link.dataset.href = href
+    link.title = 'Double-click to edit · Ctrl/Cmd-click to open'
+    link.textContent = url
+    existing.deleteContents()
+    existing.insertNode(link)
+    // The DOM now differs in length only by any trimmed punctuation; put the
+    // caret back where the user left it (after the trailing space, if any).
+    const newCaret = caret - (hit.raw.length - url.length)
+    const restored = rangeAtOffsets(el, newCaret, newCaret)
+    sel.removeAllRanges()
+    sel.addRange(restored)
+    return true
+  }, [])
+
+  /**
    * A marker typed at the start of a line in an already-typed block ends the
    * block: the lines above stay put and the marked line starts its own block
    * of that kind (plus any lines after it). Returns false when not applicable.
@@ -418,6 +476,72 @@ function RichBlockEditor({
     return true
   }, [onSplitInto, seed.kind])
 
+  const closeLinkDialog = useCallback(() => {
+    linkEditingRef.current = null
+    linkRangeRef.current = null
+    setLinkDialog(null)
+  }, [])
+
+  /** Open the add/edit-link dialog, remembering the caret for new links. */
+  const openLinkDialog = useCallback((editing?: HTMLAnchorElement) => {
+    setSlash(null)
+    if (editing) {
+      linkEditingRef.current = editing
+      linkRangeRef.current = null
+      setLinkDialog({
+        text: editing.textContent ?? '',
+        url: editing.dataset.href ?? '',
+        editing: true
+      })
+      return
+    }
+    linkEditingRef.current = null
+    const sel = window.getSelection()
+    linkRangeRef.current =
+      sel && sel.rangeCount > 0 && ref.current?.contains(sel.anchorNode)
+        ? sel.getRangeAt(0).cloneRange()
+        : null
+    setLinkDialog({ text: '', url: '', editing: false })
+  }, [])
+
+  const applyLink = (): void => {
+    if (!linkDialog) return
+    let url = linkDialog.url.trim()
+    if (!url) return
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('/') && !url.startsWith('#')) {
+      url = `https://${url}`
+    }
+    if (/^javascript:/i.test(url)) return
+    const text = (linkDialog.text.trim() || url)
+      .replaceAll('[', ' ')
+      .replaceAll(']', ' ')
+      .replaceAll('\n', ' ')
+      .trim()
+    const safeUrl = url.replace(/[)\s]/g, '')
+    const editing = linkEditingRef.current
+
+    if (editing?.isConnected) {
+      editing.textContent = text
+      editing.dataset.href = safeUrl
+    } else {
+      const range = linkRangeRef.current
+      if (range) {
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+      } else {
+        const el = ref.current
+        if (el) {
+          el.focus()
+          setCaretOffset(el, el.textContent?.length ?? 0)
+        }
+      }
+      insertHtmlAtCaret(inlineToHtml(`[${text}](${safeUrl})`))
+    }
+    commit()
+    closeLinkDialog()
+  }
+
   const applySlash = useCallback(
     (cmd: SlashCommand) => {
       const el = ref.current
@@ -433,8 +557,7 @@ function RichBlockEditor({
       }
       removeSlashToken()
       if (cmd.id === 'link') {
-        insertHtmlAtCaret(inlineToHtml('[link](url)'))
-        commit()
+        openLinkDialog()
         return
       }
       if (cmd.id === 'image') {
@@ -493,6 +616,7 @@ function RichBlockEditor({
       insertHtmlAtCaret,
       insertTextAtCaret,
       onCreateChild,
+      openLinkDialog,
       removeSlashToken,
       reseed,
       seed.kind
@@ -534,6 +658,19 @@ function RichBlockEditor({
       const el = ref.current
       const sel = window.getSelection()
       if (!el || !sel || sel.rangeCount === 0) return
+      // Treat links as atomic when splitting: put the caret after the link so
+      // the whole link stays in this block and the new block starts empty.
+      const initial = sel.getRangeAt(0)
+      const link =
+        closestWithin(initial.startContainer, 'a', el) ??
+        closestWithin(initial.endContainer, 'a', el)
+      if (link) {
+        const afterLink = document.createRange()
+        afterLink.setStartAfter(link)
+        afterLink.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(afterLink)
+      }
       const range = sel.getRangeAt(0)
       const pre = document.createRange()
       pre.selectNodeContents(el)
@@ -628,6 +765,8 @@ function RichBlockEditor({
     }
 
     const isList = seed.kind === 'bullet' || seed.kind === 'ordered' || seed.kind === 'task'
+
+    if (event.key === 'Enter') applyAutoLink()
 
     if (event.key === 'Enter' && event.shiftKey) {
       event.preventDefault()
@@ -790,6 +929,11 @@ function RichBlockEditor({
       // Inline input rules: format `**bold**`, `*it*`, `code`, … the moment
       // the closing delimiter is typed.
       if (applyInlineFormat()) return
+      // Bare domains become links once a word boundary is typed (`x.com `).
+      if (applyAutoLink(true)) {
+        commit()
+        return
+      }
     }
     commit()
     refreshSlash()
@@ -797,7 +941,14 @@ function RichBlockEditor({
 
   const onPaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
     event.preventDefault()
-    insertTextAtCaret(event.clipboardData.getData('text/plain'))
+    const text = event.clipboardData.getData('text/plain')
+    const bare = urlOnly(text)
+    const href = bare ? normalizeUrl(bare) : undefined
+    if (bare && href) {
+      insertHtmlAtCaret(inlineToHtml(`[${bare}](${href})`))
+    } else {
+      insertTextAtCaret(text)
+    }
     commit()
   }
 
@@ -818,6 +969,7 @@ function RichBlockEditor({
         onInput={onInput}
         onKeyDown={onKeyDown}
         onBlur={() => {
+          applyAutoLink()
           commit()
           setSlash(null)
         }}
@@ -831,9 +983,18 @@ function RichBlockEditor({
             onRequestRaw?.()
             return
           }
-          // Links are edited, not followed, while the block is open.
-          if (target instanceof HTMLElement && target.closest('a')) {
+          // Links stay inert while editing: plain click places the caret,
+          // double-click edits them, and Cmd/Ctrl-click opens them.
+          const anchor = target instanceof HTMLElement ? target.closest('a') : null
+          if (anchor) {
             event.preventDefault()
+            const href = anchor.dataset.href ?? ''
+            if ((event.metaKey || event.ctrlKey) && href) {
+              window.open(href, '_blank', 'noopener')
+            } else if (event.detail === 2) {
+              commit()
+              openLinkDialog(anchor)
+            }
             return
           }
           // Toggling a task checkbox is a content change; commit it.
@@ -850,6 +1011,82 @@ function RichBlockEditor({
           onPick={(cmd) => applySlash(cmd)}
         />
       )}
+      {linkDialog &&
+        createPortal(
+          <div
+            className="dlg-overlay"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeLinkDialog()
+            }}
+          >
+            <form
+              className="dlg link-dlg"
+              onSubmit={(event) => {
+                event.preventDefault()
+                applyLink()
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  closeLinkDialog()
+                }
+              }}
+            >
+              <div className="dlg__head">
+                <h2 className="dlg__title">{linkDialog.editing ? 'Edit link' : 'Add link'}</h2>
+                <button
+                  type="button"
+                  className="dlg__x"
+                  aria-label="Close"
+                  onClick={closeLinkDialog}
+                >
+                  <XIcon size={15} />
+                </button>
+              </div>
+              <label className="dlg__field">
+                <span className="dlg__label">Text</span>
+                <input
+                  className="dlg__input"
+                  value={linkDialog.text}
+                  placeholder="Link text"
+                  autoFocus
+                  onChange={(event) =>
+                    setLinkDialog((dialog) =>
+                      dialog ? { ...dialog, text: event.target.value } : dialog
+                    )
+                  }
+                />
+              </label>
+              <label className="dlg__field">
+                <span className="dlg__label">URL</span>
+                <input
+                  className="dlg__input"
+                  value={linkDialog.url}
+                  placeholder="https://example.com"
+                  onChange={(event) =>
+                    setLinkDialog((dialog) =>
+                      dialog ? { ...dialog, url: event.target.value } : dialog
+                    )
+                  }
+                />
+              </label>
+              <div className="dlg__actions">
+                <span className="dlg__spacer" />
+                <button type="button" className="btn btn--ghost" onClick={closeLinkDialog}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn--primary"
+                  disabled={!linkDialog.url.trim()}
+                >
+                  {linkDialog.editing ? 'Save' : 'Add link'}
+                </button>
+              </div>
+            </form>
+          </div>,
+          document.body
+        )}
     </>
   )
 }

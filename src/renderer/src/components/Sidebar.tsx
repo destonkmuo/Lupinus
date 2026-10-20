@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { isInlineNav, NAV_BY_KEY } from '../nav'
-import { buildNoteGraph, orderedNotes, type NoteGraph } from '../notes'
+import {
+  buildNoteGraph,
+  orderedNotes,
+  parseWikiLinks,
+  resolveWikiTarget,
+  type NoteGraph
+} from '../notes'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
-import { addHiddenPage, splitHidden } from '../subpages'
+import { addHiddenPage, joinHidden, splitHidden } from '../subpages'
 import { importDroppedPicture } from '../images'
 import {
   LOCAL_CALENDAR_ID,
@@ -12,6 +18,7 @@ import {
   type CalendarItem
 } from '../planner'
 import { formatTime12h } from '../time'
+
 import {
   SIDEBAR_DEFAULT_WIDTH,
   TAB_GROUP_COLORS,
@@ -40,6 +47,22 @@ import {
   TrashIcon,
   XIcon
 } from './icons'
+
+/** Remove `[[Child]]` / `![[Child]]` mentions from a note body (code-safe). */
+function stripChildLinks(content: string, childTitle: string): string {
+  const needle = childTitle.trim().toLowerCase()
+  if (!needle) return content
+  const parts = content.split(/(`[^`\n]+`)/g)
+  const wiki = /(!?)\[\[([^\]\n]+?)\]\]/g
+  for (let i = 0; i < parts.length; i += 2) {
+    parts[i] = parts[i].replace(wiki, (full, _bang: string, inner: string) => {
+      const pipe = inner.indexOf('|')
+      const target = (pipe < 0 ? inner : inner.slice(0, pipe)).trim()
+      return target.toLowerCase() === needle ? '' : full
+    })
+  }
+  return parts.join('')
+}
 
 // macOS floats the traffic lights over the sidebar, so the search sits below a
 // slim status band reserved for them. Elsewhere the frame is native and the
@@ -316,6 +339,7 @@ function Sidebar(): React.JSX.Element {
 
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null)
+  const [childDropId, setChildDropId] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -589,6 +613,7 @@ function Sidebar(): React.JSX.Element {
     dragIdRef.current = null
     setDraggingId(null)
     setDropHint(null)
+    setChildDropId(null)
     setNoteOverSection(null)
   }
 
@@ -655,12 +680,82 @@ function Sidebar(): React.JSX.Element {
     return Math.max(noteEnd, ...sections.map((section) => section.order)) + 0.5
   }
 
+  /** True when the pointer sits in the middle band of a row: nest it there. */
+  const isChildDrop = (event: React.DragEvent<HTMLElement>): boolean => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const y = event.clientY - rect.top
+    return y > rect.height * 0.3 && y < rect.height * 0.7
+  }
+
+  /**
+   * Remove a note from its recorded parents (hidden footer). Slash-created
+   * children also have an inline `[[Child]]` in the old parent's body; strip
+   * that too, otherwise the tree still shows the note under both parents.
+   */
+  const detachFromParents = (childId: string, keepParentId?: string): void => {
+    const state = useAppStore.getState()
+    const all = state.notes.filter((n) => !n.deletedAt)
+    const child = all.find((n) => n.id === childId)
+    if (!child) return
+    const childTitle = child.title.trim() || 'Untitled'
+    const needle = childTitle.toLowerCase()
+    for (const note of all) {
+      if (note.id === childId || note.id === keepParentId) continue
+      const { body, hidden } = splitHidden(note.content)
+      if (!hidden) continue
+      if (!hidden.pages.some((p) => p.trim().toLowerCase() === needle)) continue
+      const pages = hidden.pages.filter((p) => p.trim().toLowerCase() !== needle)
+      const next = joinHidden(stripChildLinks(body, childTitle), { raw: '', pages })
+      if (next === note.content) continue
+      state.updateNote(note.id, { content: next })
+      void state.saveNoteToVault(note.id)
+    }
+  }
+
+  /**
+   * Make `dragId` a child of `parentId` by adding `[[Child]]` to the parent's
+   * hidden footer and removing it from any previous parent's footer.
+   */
+  const reparentNote = (dragId: string, parentId: string): void => {
+    const state = useAppStore.getState()
+    const all = state.notes.filter((n) => !n.deletedAt)
+    const child = all.find((n) => n.id === dragId)
+    const parent = all.find((n) => n.id === parentId)
+    if (!child || !parent) return
+    const childTitle = child.title.trim() || 'Untitled'
+    // Refuse moves that would create a cycle (parent is already a descendant).
+    const byId = new Map(all.map((n) => [n.id, n]))
+    const seen = new Set([dragId])
+    const queue = [dragId]
+    while (queue.length > 0) {
+      const cur = queue.shift() as string
+      const note = byId.get(cur)
+      if (!note) continue
+      for (const link of parseWikiLinks(note.content)) {
+        const id = resolveWikiTarget(link.target, all)
+        if (!id || seen.has(id)) continue
+        if (id === parentId) return
+        seen.add(id)
+        queue.push(id)
+      }
+    }
+    const nextParent = addHiddenPage(parent.content, childTitle)
+    if (nextParent !== parent.content) {
+      state.updateNote(parentId, { content: nextParent })
+      void state.saveNoteToVault(parentId)
+    }
+    detachFromParents(dragId, parentId)
+  }
+
   const onNoteDrop = (event: React.DragEvent<HTMLLIElement>, noteId: string): void => {
     event.preventDefault()
     event.stopPropagation()
     const dragId = dragIdRef.current
     clearDrag()
     if (dragId && dragId !== noteId) {
+      // Dropping on an edge puts the note back at top level; a nested note
+      // must detach from its old parent first.
+      detachFromParents(dragId)
       // Adopt the target's section when dragging across dividers.
       if (sectionOf(dragId) !== sectionOf(noteId)) setNoteSection(dragId, sectionOf(noteId))
       moveNote(dragId, noteId, positionFromEvent(event))
@@ -716,6 +811,7 @@ function Sidebar(): React.JSX.Element {
     const dragId = dragIdRef.current
     clearDrag()
     if (dragId) {
+      detachFromParents(dragId)
       setNoteSection(dragId, null)
       moveNote(dragId, null, false)
     }
@@ -765,6 +861,7 @@ function Sidebar(): React.JSX.Element {
   // Drop a note onto a section: file it there, pinned after that section's
   // last root so it lands inside the group.
   const assignToSection = (dragId: string, sectionId: string | null): void => {
+    detachFromParents(dragId)
     const peers = (spaceViews.get(activeSpaceId)?.visible ?? []).filter(
       (n) => n.id !== dragId && sectionOf(n.id) === sectionId
     )
@@ -889,6 +986,9 @@ function Sidebar(): React.JSX.Element {
     state.updateNote(parentId, {
       content: addHiddenPage(parent.content, child?.title.trim() || title)
     })
+    // Persist the parent's hidden footer immediately: opening the child
+    // unmounts the parent editor and cancels its debounced autosave.
+    void state.saveNoteToVault(parentId)
     setMenu(null)
     setChildMenu(null)
     state.openNote(childId)
@@ -1199,98 +1299,105 @@ function Sidebar(): React.JSX.Element {
     )
     const isOpen = expandedIds.has(note.id)
     const hint = dropHint?.id === note.id ? dropHint : null
-    const dragAttrs =
-      depth === 0
-        ? {
-            draggable: true as const,
-            onDragStart: (event: React.DragEvent<HTMLLIElement>): void => {
-              dragIdRef.current = note.id
-              setDraggingId(note.id)
-              event.dataTransfer.effectAllowed = 'move'
-            },
-            onDragEnd: () => {
-              clearDrag()
-              setDropNoteId(null)
-            },
-            onDragOver: (event: React.DragEvent<HTMLLIElement>): void => {
-              event.preventDefault()
-              event.dataTransfer.dropEffect = 'move'
-              if (dividerDragRef.current) {
-                setDropHint({ id: note.id, before: positionFromEvent(event) })
-              } else if (sectionDragRef.current && !needle && container === '') {
-                setSectionDropHint(null)
-                setDropHint({ id: note.id, before: positionFromEvent(event) })
-              } else if (dragIdRef.current && dragIdRef.current !== note.id) {
-                setDropHint({ id: note.id, before: positionFromEvent(event) })
-              }
-              if (isPictureDragTypes(event.dataTransfer.types ?? [])) {
-                setDropNoteId(note.id)
-              }
-            },
-            onDragLeave: () => setDropNoteId(null),
-            onDrop: (event: React.DragEvent<HTMLLIElement>): void => {
-              // A section dropped on a top-level row takes that note's slot,
-              // letting sections sit between and around notes.
-              if (sectionDragRef.current && !needle && container === '') {
-                event.preventDefault()
-                event.stopPropagation()
-                const dragId = sectionDragRef.current
-                const before = positionFromEvent(event)
-                clearSectionDrag()
-                setSectionOrder(dragId, sectionRankAtNote(spaceId, index, before))
-                setDropNoteId(null)
-                return
-              }
-              // A line divider dropped on a row lands before/after that note
-              // in the same container (top level, section, or children).
-              if (dividerDragRef.current) {
-                event.preventDefault()
-                event.stopPropagation()
-                const dragId = dividerDragRef.current
-                const before = positionFromEvent(event)
-                clearDividerDrag()
-                moveDivider(dragId, container, index + (before ? -0.5 : 0.5))
-                setDropNoteId(null)
-                return
-              }
-              // Internal reorders (note/section drags) keep working when the
-              // platform reports no types; anything carrying files or URLs
-              // from outside the app is a picture drop.
-              const internal = dragIdRef.current !== null || sectionDragRef.current !== null
-              const external =
-                event.dataTransfer.files.length > 0 ||
-                event.dataTransfer.getData('text/uri-list').trim().length > 0
-              if (external && !internal) void onRowDropPictures(event, note.id)
-              else onNoteDrop(event, note.id)
-              setDropNoteId(null)
-            }
+    const dragAttrs = {
+      draggable: true,
+      onDragStart: (event: React.DragEvent<HTMLLIElement>): void => {
+        // Nested rows are inside their parent's draggable row: without this,
+        // the dragstart bubbles and the parent overwrites the dragged id.
+        event.stopPropagation()
+        dragIdRef.current = note.id
+        setDraggingId(note.id)
+        event.dataTransfer.effectAllowed = 'move'
+      },
+      onDragEnd: () => {
+        clearDrag()
+        setDropNoteId(null)
+      },
+      onDragOver: (event: React.DragEvent<HTMLLIElement>): void => {
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'move'
+        if (dividerDragRef.current) {
+          setChildDropId(null)
+          setDropHint({ id: note.id, before: positionFromEvent(event) })
+        } else if (sectionDragRef.current && depth === 0 && !needle && container === '') {
+          setChildDropId(null)
+          setSectionDropHint(null)
+          setDropHint({ id: note.id, before: positionFromEvent(event) })
+        } else if (dragIdRef.current && dragIdRef.current !== note.id) {
+          // Middle of the row = make the dragged note a child of this one;
+          // top/bottom edges keep the usual before/after reorder.
+          if (depth > 0 || isChildDrop(event)) {
+            setDropHint(null)
+            setChildDropId(note.id)
+          } else {
+            setChildDropId(null)
+            setDropHint({ id: note.id, before: positionFromEvent(event) })
           }
-        : {
-            // Nested rows aren't reorderable themselves, but they're still
-            // drop targets for a dragged line divider.
-            onDragOver: (event: React.DragEvent<HTMLLIElement>): void => {
-              if (!dividerDragRef.current) return
-              event.preventDefault()
-              event.stopPropagation()
-              event.dataTransfer.dropEffect = 'move'
-              setDropHint({ id: note.id, before: positionFromEvent(event) })
-            },
-            onDrop: (event: React.DragEvent<HTMLLIElement>): void => {
-              if (!dividerDragRef.current) return
-              event.preventDefault()
-              event.stopPropagation()
-              const dragId = dividerDragRef.current
-              const before = positionFromEvent(event)
-              clearDividerDrag()
-              moveDivider(dragId, container, index + (before ? -0.5 : 0.5))
-            }
-          }
+        }
+        if (isPictureDragTypes(event.dataTransfer.types ?? [])) {
+          setDropNoteId(note.id)
+        }
+      },
+      onDragLeave: (event: React.DragEvent<HTMLLIElement>) => {
+        event.stopPropagation()
+        setDropNoteId(null)
+        setChildDropId(null)
+      },
+      onDrop: (event: React.DragEvent<HTMLLIElement>): void => {
+        // A section dropped on a top-level row takes that note's slot,
+        // letting sections sit between and around notes.
+        if (sectionDragRef.current && depth === 0 && !needle && container === '') {
+          event.preventDefault()
+          event.stopPropagation()
+          const dragId = sectionDragRef.current
+          const before = positionFromEvent(event)
+          clearSectionDrag()
+          setSectionOrder(dragId, sectionRankAtNote(spaceId, index, before))
+          setDropNoteId(null)
+          return
+        }
+        // A line divider dropped on a row lands before/after that note
+        // in the same container (top level, section, or children).
+        if (dividerDragRef.current) {
+          event.preventDefault()
+          event.stopPropagation()
+          const dragId = dividerDragRef.current
+          const before = positionFromEvent(event)
+          clearDividerDrag()
+          moveDivider(dragId, container, index + (before ? -0.5 : 0.5))
+          setDropNoteId(null)
+          return
+        }
+        const dragId = dragIdRef.current
+        if (dragId && dragId !== note.id && (depth > 0 || isChildDrop(event))) {
+          event.preventDefault()
+          event.stopPropagation()
+          clearDrag()
+          reparentNote(dragId, note.id)
+          // Keep the new child visible under a previously collapsed parent.
+          setExpandedIds((prev) => new Set(prev).add(note.id))
+          setDropNoteId(null)
+          return
+        }
+        // Internal reorders (note/section drags) keep working when the
+        // platform reports no types; anything carrying files or URLs
+        // from outside the app is a picture drop.
+        const internal = dragIdRef.current !== null || sectionDragRef.current !== null
+        const external =
+          event.dataTransfer.files.length > 0 ||
+          event.dataTransfer.getData('text/uri-list').trim().length > 0
+        if (external && !internal) void onRowDropPictures(event, note.id)
+        else if (depth === 0) onNoteDrop(event, note.id)
+        setDropNoteId(null)
+      }
+    }
     const renaming = renamingNoteId === note.id
     return (
       <li
         key={note.id}
         {...dragAttrs}
-        className={`sidebar__note${draggingId === note.id && depth === 0 ? ' sidebar__note--dragging' : ''}${hint ? (hint.before ? ' sidebar__note--drop-before' : ' sidebar__note--drop-after') : ''}${dropNoteId === note.id ? ' is-drop-target' : ''}`}
+        className={`sidebar__note${draggingId === note.id ? ' sidebar__note--dragging' : ''}${hint ? (hint.before ? ' sidebar__note--drop-before' : ' sidebar__note--drop-after') : ''}${childDropId === note.id ? ' sidebar__note--drop-child' : ''}${dropNoteId === note.id ? ' is-drop-target' : ''}`}
       >
         <div
           data-note-row={note.id}
@@ -1391,14 +1498,26 @@ function Sidebar(): React.JSX.Element {
         {kids.length > 0 && isOpen && (
           <ul
             className="sidebar__notes sidebar__notes--nested"
-            onDragOver={(event) => event.preventDefault()}
+            onDragOver={(event) => {
+              event.preventDefault()
+              if (dragIdRef.current && dragIdRef.current !== note.id) setChildDropId(note.id)
+            }}
             onDrop={(event) => {
-              if (!dividerDragRef.current) return
+              if (dividerDragRef.current) {
+                event.preventDefault()
+                event.stopPropagation()
+                const dragId = dividerDragRef.current
+                clearDividerDrag()
+                moveDivider(dragId, note.id, kids.length + 0.5)
+                return
+              }
+              const dragId = dragIdRef.current
+              if (!dragId) return
               event.preventDefault()
               event.stopPropagation()
-              const dragId = dividerDragRef.current
-              clearDividerDrag()
-              moveDivider(dragId, note.id, kids.length + 0.5)
+              clearDrag()
+              if (dragId !== note.id) reparentNote(dragId, note.id)
+              setExpandedIds((prev) => new Set(prev).add(note.id))
             }}
           >
             {withDividers(note.id, kids, spaceId, (kid, kidIndex) =>
@@ -1575,7 +1694,12 @@ function Sidebar(): React.JSX.Element {
     if (spaces.length < 2) return
     if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
     const target = event.target as HTMLElement
-    if (target.closest('input, textarea, [contenteditable="true"], pre, .tabbar__list')) return
+    if (
+      target.closest(
+        'input, textarea, [contenteditable="true"], pre, .tabbar__list, .sidebar__favorites'
+      )
+    )
+      return
     const now = event.timeStamp
     const gesture = swipeRef.current
     if (now - gesture.lastAt > SWIPE_GAP_MS) {
@@ -1600,7 +1724,11 @@ function Sidebar(): React.JSX.Element {
       onWheel={onSpaceWheel}
       onTouchStart={(event) => {
         touchStartRef.current = null
-        if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]'))
+        if (
+          (event.target as HTMLElement).closest(
+            'input, textarea, [contenteditable="true"], .sidebar__favorites'
+          )
+        )
           return
         const touch = event.touches[0]
         touchStartRef.current = { x: touch.clientX, y: touch.clientY }

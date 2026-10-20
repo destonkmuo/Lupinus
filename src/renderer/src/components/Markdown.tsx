@@ -4,6 +4,7 @@ import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { resolveImageSrc, type ImageControls, type ImageSide } from '../images'
 import { BULLET, FENCE, HEADING, ORDERED, QUOTE, RULE, TASK, splitBlocks } from '../markdown'
+import { normalizeUrl, splitLinks } from '../links'
 import { resolveWikiTarget } from '../notes'
 import { useAppStore } from '../store/appStore'
 import CodeBlock from './CodeBlock'
@@ -349,12 +350,30 @@ function renderInline(text: string, prefix: string, images?: ImageControls): Rea
   const nodes: ReactNode[] = []
   let last = 0
   let index = 0
+  let autoKey = 0
   let match: RegExpExecArray | null
+
+  // Plain runs may contain bare URLs (`x.com`); render those as links too.
+  const pushText = (value: string): void => {
+    for (const part of splitLinks(value)) {
+      if (!part.value) continue
+      const href = part.url ? normalizeUrl(part.value) : undefined
+      if (part.url && href) {
+        nodes.push(
+          <a key={`${prefix}-auto-${autoKey++}`} href={href} target="_blank" rel="noreferrer">
+            {part.value}
+          </a>
+        )
+      } else {
+        nodes.push(smartArrows(part.value))
+      }
+    }
+  }
 
   INLINE_RE.lastIndex = 0
   while ((match = INLINE_RE.exec(text)) !== null) {
     if (match.index > last) {
-      nodes.push(smartArrows(text.slice(last, match.index)))
+      pushText(text.slice(last, match.index))
     }
 
     const token = match[0]
@@ -457,7 +476,7 @@ function renderInline(text: string, prefix: string, images?: ImageControls): Rea
   }
 
   if (last < text.length) {
-    nodes.push(smartArrows(text.slice(last)))
+    pushText(text.slice(last))
   }
   return nodes
 }

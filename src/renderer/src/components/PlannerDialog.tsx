@@ -53,6 +53,17 @@ function PlannerDialog({
   const addTask = useAppStore((state) => state.addTask)
   const updateTask = useAppStore((state) => state.updateTask)
   const deleteTask = useAppStore((state) => state.deleteTask)
+  const localCalendarName = useAppStore((state) => state.localCalendarName)
+  const subscriptions = useAppStore((state) => state.subscriptions)
+
+  /** Calendars a new event can be filed under: the built-in one + local ones. */
+  const writableCalendars = useMemo(
+    () => [
+      { id: LOCAL_CALENDAR_ID, name: localCalendarName },
+      ...subscriptions.filter((sub) => sub.local).map((sub) => ({ id: sub.id, name: sub.name }))
+    ],
+    [localCalendarName, subscriptions]
+  )
 
   const [kind, setKind] = useState<DialogKind>(
     target.mode === 'create' ? target.kind : target.mode === 'edit-item' ? 'event' : 'task'
@@ -97,6 +108,9 @@ function PlannerDialog({
   )
   const [done, setDone] = useState(
     () => target.mode === 'edit-task' && target.item.status === 'completed'
+  )
+  const [calendarId, setCalendarId] = useState(() =>
+    target.mode === 'edit-item' ? target.item.calendarId : LOCAL_CALENDAR_ID
   )
 
   // Recurrence form state, seeded from the item's existing rule.
@@ -166,8 +180,8 @@ function PlannerDialog({
         startTime: allDay || !start ? null : start,
         endTime,
         recurrence: buildRule(),
-        // New events always land in the writable local calendar; feeds are read-only.
-        calendarId: target.mode === 'edit-item' ? target.item.calendarId : LOCAL_CALENDAR_ID
+        // Feeds are read-only, so events can only live in writable calendars.
+        calendarId
       }
       if (target.mode === 'edit-item') {
         updateCalendarItem(target.item.id, draft)
@@ -281,6 +295,23 @@ function PlannerDialog({
             </>
           )}
         </div>
+
+        {!isTask && writableCalendars.length > 1 && (
+          <label className="dlg__field">
+            <span className="dlg__label">Calendar</span>
+            <select
+              className="dlg__input"
+              value={calendarId}
+              onChange={(event) => setCalendarId(event.target.value)}
+            >
+              {writableCalendars.map((calendar) => (
+                <option key={calendar.id} value={calendar.id}>
+                  {calendar.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <div className="dlg__row dlg__row--checks">
           {isTask ? (

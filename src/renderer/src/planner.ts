@@ -49,6 +49,9 @@ export interface TaskItem {
 /** The local, editable calendar. Any other id refers to a subscription. */
 export const LOCAL_CALENDAR_ID = 'local'
 
+/** Default display name for the local calendar. */
+export const LOCAL_CALENDAR_NAME = 'SeeMO'
+
 export interface CalendarItem {
   id: string
   summary: string
@@ -77,6 +80,11 @@ export interface CalendarSubscription {
   lastFetched: number | null
   error: string | null
   events: CalendarItem[]
+  /**
+   * Local calendars have no feed: they are writable, and their events live in
+   * `calendar.json` next to the built-in calendar instead of being cached.
+   */
+  local?: boolean
 }
 
 /** Read-only view model the calendar UI renders from. */
@@ -535,7 +543,9 @@ export function parseSubscriptions(data: unknown): CalendarSubscription[] {
     if (!isRecord(value)) return
     const id = asId(value.id)
     const url = asString(value.url)
-    if (!id || !url) return
+    // A local calendar has no feed, so an empty url is fine for it.
+    const local = value.local === true
+    if (!id || (!url && !local)) return
     const events: CalendarItem[] = []
     if (Array.isArray(value.events)) {
       for (const raw of value.events) {
@@ -551,7 +561,8 @@ export function parseSubscriptions(data: unknown): CalendarSubscription[] {
       enabled: value.enabled !== false,
       lastFetched: typeof value.lastFetched === 'number' ? value.lastFetched : null,
       error: typeof value.error === 'string' ? value.error : null,
-      events
+      events,
+      local
     })
   })
   return out

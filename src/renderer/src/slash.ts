@@ -168,6 +168,9 @@ export const filteredSlash = (token: string): SlashCommand[] => {
   const needle = token.toLowerCase()
   if (!needle) return SLASH_COMMANDS
   return SLASH_COMMANDS.filter(
-    (cmd) => cmd.title.toLowerCase().includes(needle) || cmd.keywords.includes(needle)
+    (cmd) =>
+      cmd.id.toLowerCase().includes(needle) ||
+      cmd.title.toLowerCase().includes(needle) ||
+      cmd.keywords.includes(needle)
   )
 }

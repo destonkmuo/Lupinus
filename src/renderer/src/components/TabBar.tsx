@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { isInlineNav } from '../nav'
 import { TAB_GROUP_COLORS, useAppStore, type Tab } from '../store/appStore'
-import { FileTextIcon, ChevronLeftIcon, ChevronRightIcon, SidebarToggleIcon, XIcon } from './icons'
+import {
+  FileTextIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PinIcon,
+  PlusIcon,
+  SidebarToggleIcon,
+  XIcon
+} from './icons'
 
 interface DropHint {
   id: string
@@ -41,6 +49,7 @@ function TabBar(): React.JSX.Element {
   const goForwardTab = useAppStore((state) => state.goForwardTab)
   const closeTab = useAppStore((state) => state.closeTab)
   const moveTab = useAppStore((state) => state.moveTab)
+  const toggleTabPinned = useAppStore((state) => state.toggleTabPinned)
   const moveTabGroup = useAppStore((state) => state.moveTabGroup)
   const setSplitTab = useAppStore((state) => state.setSplitTab)
   const createTabGroup = useAppStore((state) => state.createTabGroup)
@@ -51,6 +60,7 @@ function TabBar(): React.JSX.Element {
   const toggleTabGroupCollapsed = useAppStore((state) => state.toggleTabGroupCollapsed)
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed)
   const toggleSidebar = useAppStore((state) => state.toggleSidebar)
+  const createNote = useAppStore((state) => state.createNote)
 
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<DropHint | null>(null)
@@ -202,7 +212,7 @@ function TabBar(): React.JSX.Element {
           event.preventDefault()
           setMenu({ kind: 'tab', tabId: tab.id, ...clampMenu(event.clientX, event.clientY) })
         }}
-        className={`tab tab--note${isActive ? ' is-active' : ''}${draggingId === tab.id ? ' tab--dragging' : ''}${hint ? (hint.before ? ' tab--drop-before' : ' tab--drop-after') : ''}`}
+        className={`tab tab--note${tab.pinned ? ' tab--pinned' : ''}${isActive ? ' is-active' : ''}${draggingId === tab.id ? ' tab--dragging' : ''}${hint ? (hint.before ? ' tab--drop-before' : ' tab--drop-after') : ''}`}
       >
         <button
           type="button"
@@ -219,6 +229,7 @@ function TabBar(): React.JSX.Element {
           ) : (
             <FileTextIcon size={14} />
           )}
+          {tab.pinned && <PinIcon size={11} className="tab__pin" />}
           <span className="tab__label">{label}</span>
         </button>
         <button
@@ -234,7 +245,8 @@ function TabBar(): React.JSX.Element {
     )
   }
 
-  const ungrouped = tabs.filter((t) => !groupOf(t.id))
+  const pinned = tabs.filter((t) => t.pinned)
+  const ungrouped = tabs.filter((t) => !t.pinned && !groupOf(t.id))
   const menuTab = menu?.kind === 'tab' ? tabs.find((t) => t.id === menu.tabId) : null
   const menuGroup = menu?.kind === 'group' ? tabGroups.find((g) => g.id === menu.groupId) : null
   const menuTabGroup = menuTab ? groupOf(menuTab.id) : null
@@ -288,9 +300,10 @@ function TabBar(): React.JSX.Element {
             No note tabs
           </span>
         )}
+        {pinned.map((tab) => renderTab(tab))}
         {ungrouped.map((tab) => renderTab(tab))}
         {tabGroups.map((group) => {
-          const groupTabs = tabs.filter((t) => groupOf(t.id) === group.id)
+          const groupTabs = tabs.filter((t) => !t.pinned && groupOf(t.id) === group.id)
           // The visible tab's group never renders collapsed.
           const collapsed =
             collapsedTabGroups.includes(group.id) &&
@@ -380,6 +393,15 @@ function TabBar(): React.JSX.Element {
             </div>
           )
         })}
+        <button
+          type="button"
+          className="tabbar__new"
+          title="New note"
+          aria-label="New note"
+          onClick={() => createNote()}
+        >
+          <PlusIcon size={15} />
+        </button>
       </div>
 
       {menu && (
@@ -442,6 +464,16 @@ function TabBar(): React.JSX.Element {
               Remove from group
             </button>
           )}
+          <button
+            type="button"
+            className="note-menu__item"
+            onClick={() => {
+              toggleTabPinned(menuTab.id)
+              setMenu(null)
+            }}
+          >
+            {menuTab.pinned ? 'Unpin tab' : 'Pin tab'}
+          </button>
           <button
             type="button"
             className="note-menu__item"

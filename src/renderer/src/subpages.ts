@@ -75,9 +75,12 @@ export function parseHiddenRaw(raw: string): HiddenSection {
 /** Serialize a hidden section (marker + page links). */
 export function serializeHidden(pages: string[]): string {
   const out = [hiddenMarker(), '']
+  const seen = new Set<string>()
   for (const title of pages) {
     const target = title.trim()
-    if (target) out.push(`[[${target}]]`)
+    if (!target || seen.has(target.toLowerCase())) continue
+    seen.add(target.toLowerCase())
+    out.push(`[[${target}]]`)
   }
   return out.join('\n') + '\n'
 }

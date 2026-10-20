@@ -7,18 +7,28 @@ import { filteredSlash, type SlashCommand } from '../slash'
 function SlashMenu({
   token,
   selected,
+  fixedAt,
   onHover,
   onPick
 }: {
   token: string
   selected: number
+  /** Viewport position for editors whose caret can be anywhere on the page. */
+  fixedAt?: { x: number; y: number }
   onHover: (index: number) => void
   onPick: (cmd: SlashCommand) => void
 }): React.JSX.Element {
   const items = filteredSlash(token)
   const safe = items.length === 0 ? 0 : selected % items.length
   return (
-    <div className="slash-menu" role="listbox" aria-label="Insert block">
+    <div
+      className="slash-menu"
+      role="listbox"
+      aria-label="Insert block"
+      style={
+        fixedAt ? { position: 'fixed', left: fixedAt.x, top: fixedAt.y, zIndex: 200 } : undefined
+      }
+    >
       {items.length === 0 ? (
         <p className="slash-menu__empty">No matches</p>
       ) : (

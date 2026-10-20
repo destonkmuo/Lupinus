@@ -32,6 +32,7 @@ import {
   CalendarIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  PencilIcon,
   PlusIcon,
   TaskIcon,
   XIcon
@@ -70,6 +71,7 @@ function Calendar(): React.JSX.Element {
   const calendarItems = useAppStore((state) => state.calendarItems)
   const tasks = useAppStore((state) => state.tasks)
   const subscriptions = useAppStore((state) => state.subscriptions)
+  const localCalendarName = useAppStore((state) => state.localCalendarName)
   const localCalendarColor = useAppStore((state) => state.localCalendarColor)
   const plannerReady = useAppStore((state) => state.plannerReady)
   const plannerError = useAppStore((state) => state.plannerError)
@@ -94,7 +96,7 @@ function Calendar(): React.JSX.Element {
     () => [
       {
         id: LOCAL_CALENDAR_ID,
-        name: 'SeeMO',
+        name: localCalendarName,
         color: localCalendarColor,
         enabled: true,
         readOnly: false,
@@ -105,11 +107,11 @@ function Calendar(): React.JSX.Element {
         name: sub.name,
         color: sub.color,
         enabled: sub.enabled,
-        readOnly: true,
+        readOnly: !sub.local,
         error: sub.error
       }))
     ],
-    [localCalendarColor, subscriptions]
+    [localCalendarColor, localCalendarName, subscriptions]
   )
 
   // Expand every visible calendar (recurrences included) across the range the
@@ -135,10 +137,15 @@ function Calendar(): React.JSX.Element {
       else map.set(date, [entry])
     }
 
-    const itemsFor = (id: string): CalendarItem[] =>
-      id === LOCAL_CALENDAR_ID
-        ? calendarItems
-        : (subscriptions.find((s) => s.id === id)?.events ?? [])
+    const itemsFor = (id: string): CalendarItem[] => {
+      if (id === LOCAL_CALENDAR_ID) {
+        return calendarItems.filter((item) => item.calendarId === LOCAL_CALENDAR_ID)
+      }
+      const sub = subscriptions.find((s) => s.id === id)
+      // Local calendars keep their events in calendar.json; feeds cache theirs.
+      if (sub?.local) return calendarItems.filter((item) => item.calendarId === id)
+      return sub?.events ?? []
+    }
 
     for (const source of sources) {
       if (!isSourceVisible(source, hidden)) continue
@@ -403,21 +410,53 @@ function CalendarsPanel({
 }): React.JSX.Element {
   const subscriptions = useAppStore((state) => state.subscriptions)
   const localCalendarColor = useAppStore((state) => state.localCalendarColor)
+  const setLocalCalendarName = useAppStore((state) => state.setLocalCalendarName)
   const setLocalCalendarColor = useAppStore((state) => state.setLocalCalendarColor)
   const updateSubscription = useAppStore((state) => state.updateSubscription)
   const removeSubscription = useAppStore((state) => state.removeSubscription)
   const refreshSubscription = useAppStore((state) => state.refreshSubscription)
   const addSubscription = useAppStore((state) => state.addSubscription)
+  const addLocalCalendar = useAppStore((state) => state.addLocalCalendar)
 
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [color, setColor] = useState(() => defaultCalendarColor(subscriptions.length + 1))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+
+  const startRename = (source: SourceView): void => {
+    setRenamingId(source.id)
+    setRenameDraft(source.name)
+  }
+
+  const cancelRename = (): void => {
+    setRenamingId(null)
+    setRenameDraft('')
+  }
+
+  const commitRename = (): void => {
+    if (!renamingId) return
+    const next = renameDraft.trim()
+    if (next) {
+      if (renamingId === LOCAL_CALENDAR_ID) setLocalCalendarName(next)
+      else updateSubscription(renamingId, { name: next })
+    }
+    cancelRename()
+  }
 
   const subscribe = async (): Promise<void> => {
+    if (!name.trim()) {
+      setError('Give the calendar a name first.')
+      return
+    }
+    // No feed URL: create a local, writable calendar instead of subscribing.
     if (!url.trim()) {
-      setError('Paste an .ics feed URL first.')
+      addLocalCalendar({ name, color })
+      setName('')
+      setUrl('')
+      setColor(defaultCalendarColor(subscriptions.length + 2))
       return
     }
     setBusy(true)
@@ -459,10 +498,38 @@ function CalendarsPanel({
               >
                 <span className="cal-cals__dot" style={{ background: swatch }} />
               </button>
-              <span className="cal-cals__name">
-                {source.name}
-                {source.readOnly && <em className="cal-cals__badge">subscribed</em>}
-              </span>
+              {renamingId === source.id ? (
+                <input
+                  className="cal-cals__name-input"
+                  autoFocus
+                  value={renameDraft}
+                  aria-label={`Rename ${source.name}`}
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') commitRename()
+                    if (event.key === 'Escape') cancelRename()
+                  }}
+                  onBlur={commitRename}
+                />
+              ) : (
+                <span
+                  className="cal-cals__name"
+                  title={`${source.name} · double-click to rename`}
+                  onDoubleClick={() => startRename(source)}
+                >
+                  {source.name}
+                  {source.readOnly && <em className="cal-cals__badge">subscribed</em>}
+                </span>
+              )}
+              <button
+                type="button"
+                className="cal-cals__icon"
+                title="Rename"
+                aria-label={`Rename ${source.name}`}
+                onClick={() => startRename(source)}
+              >
+                <PencilIcon size={13} />
+              </button>
               <select
                 className="cal-cals__color"
                 aria-label={`${source.name} color`}
@@ -481,20 +548,22 @@ function CalendarsPanel({
               </select>
               {sub && (
                 <>
-                  <button
-                    type="button"
-                    className="cal-cals__icon"
-                    title="Refresh"
-                    aria-label={`Refresh ${sub.name}`}
-                    onClick={() => void refreshSubscription(sub.id)}
-                  >
-                    ⟳
-                  </button>
+                  {!sub.local && (
+                    <button
+                      type="button"
+                      className="cal-cals__icon"
+                      title="Refresh"
+                      aria-label={`Refresh ${sub.name}`}
+                      onClick={() => void refreshSubscription(sub.id)}
+                    >
+                      ⟳
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="cal-cals__icon cal-cals__icon--danger"
-                    title="Unsubscribe"
-                    aria-label={`Unsubscribe ${sub.name}`}
+                    title={sub.local ? 'Delete calendar' : 'Unsubscribe'}
+                    aria-label={sub.local ? `Delete ${sub.name}` : `Unsubscribe ${sub.name}`}
                     onClick={() => removeSubscription(sub.id)}
                   >
                     <XIcon size={13} />
@@ -507,16 +576,16 @@ function CalendarsPanel({
         })}
 
         <div className="cal-cals__add">
-          <span className="dlg__label">Subscribe to a calendar</span>
+          <span className="dlg__label">Add a calendar</span>
           <input
             className="dlg__input"
-            placeholder="Name (e.g. CS Classes)"
+            placeholder="Name (e.g. Courses)"
             value={name}
             onChange={(event) => setName(event.target.value)}
           />
           <input
             className="dlg__input"
-            placeholder="https://…/basic.ics"
+            placeholder="https://…/basic.ics (optional)"
             value={url}
             spellCheck={false}
             onChange={(event) => setUrl(event.target.value)}
@@ -543,11 +612,12 @@ function CalendarsPanel({
               disabled={busy}
               onClick={() => void subscribe()}
             >
-              {busy ? 'Subscribing…' : 'Subscribe'}
+              {busy ? 'Subscribing…' : url.trim() ? 'Subscribe' : 'Create'}
             </button>
           </div>
           <p className="dlg__hint">
-            Read-only http(s) .ics feed. Recurring classes come through as weekly events.
+            Leave the URL empty for an editable calendar. With a URL it becomes a read-only http(s)
+            .ics feed.
           </p>
           {error && (
             <p className="cal-cals__error" role="alert">

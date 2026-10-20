@@ -9,6 +9,7 @@ import {
   CALENDARS_FILE,
   CALENDAR_COLORS,
   CALENDAR_FILE,
+  LOCAL_CALENDAR_NAME,
   ROUTINES_FILE,
   TASKS_FILE,
   TODO_FILE,
@@ -111,7 +112,7 @@ export interface ImageLayout {
  * Calendar, …) render as a sidebar-selected view and never occupy the tab
  * bar, so clicking around the sidebar can't pile up tab clutter.
  */
-export type Tab = { id: string; kind: 'note'; noteId: string }
+export type Tab = { id: string; kind: 'note'; noteId: string; pinned?: boolean }
 
 export interface ChatMessage {
   id: string
@@ -324,6 +325,7 @@ interface AppState {
   closeAllTabs: () => void
   closeAllGroups: () => void
   moveTab: (dragId: string, targetId: string | null, before: boolean) => void
+  toggleTabPinned: (id: string) => void
   moveNote: (dragId: string, targetId: string | null, before: boolean) => void
   createSection: (title?: string, spaceId?: string) => string
   createDivider: (container?: string, spaceId?: string) => string
@@ -371,6 +373,7 @@ interface AppState {
   tasks: TaskItem[]
   routines: RoutineItem[]
   subscriptions: CalendarSubscription[]
+  localCalendarName: string
   localCalendarColor: string
   plannerReady: boolean
   plannerError: string | null
@@ -393,8 +396,10 @@ interface AppState {
   toggleRoutineAll: (routineId: string) => void
   resetRoutine: (routineId: string) => void
   ensureRoutinesToday: () => void
+  setLocalCalendarName: (name: string) => void
   setLocalCalendarColor: (color: string) => void
   addSubscription: (input: { name: string; url: string; color: string }) => Promise<string>
+  addLocalCalendar: (input: { name: string; color: string }) => string
   updateSubscription: (
     id: string,
     patch: Partial<Pick<CalendarSubscription, 'name' | 'color' | 'enabled'>>
@@ -1015,6 +1020,7 @@ export const useAppStore = create<AppState>()(
       tasks: [],
       routines: [],
       subscriptions: [],
+      localCalendarName: LOCAL_CALENDAR_NAME,
       localCalendarColor: CALENDAR_COLORS[0],
       plannerReady: false,
       plannerError: null,
@@ -1487,10 +1493,10 @@ export const useAppStore = create<AppState>()(
           }
         }),
       closeAllTabs: () => {
-        // Clearing closes ungrouped tabs only; grouped tabs are kept.
+        // Clearing closes plain ungrouped tabs; pinned and grouped tabs stay.
         // With nothing left, land back on Home, never an empty shell.
         const grouped = (tabs: Tab[], tabGroup: Record<string, string>): Tab[] =>
-          tabs.filter((t) => tabGroup[t.id])
+          tabs.filter((t) => t.pinned || tabGroup[t.id])
         return set((state) => {
           const kept = grouped(state.tabs, state.tabGroup)
           if (kept.length === 0) {
@@ -1562,6 +1568,10 @@ export const useAppStore = create<AppState>()(
           }
         })
       },
+      toggleTabPinned: (id) =>
+        set((state) => ({
+          tabs: state.tabs.map((tab) => (tab.id === id ? { ...tab, pinned: !tab.pinned } : tab))
+        })),
       moveTab: (dragId, targetId, before) =>
         set((state) => {
           if (dragId === targetId) return {}
@@ -1787,6 +1797,18 @@ export const useAppStore = create<AppState>()(
           current && typeof rawTitle === 'string' && effectiveNew !== effectiveOld
             ? { oldTitle: effectiveOld, newTitle: effectiveNew }
             : null
+        // A rename retargets wiki-links inside *other* notes (hidden footers
+        // keep subpages parented). Those files aren't open, so nothing else
+        // would save them before the app closes.
+        const swept: string[] = []
+        if (sweep) {
+          for (const n of get().notes) {
+            if (n.id === id || n.deletedAt) continue
+            if (renameLinkTarget(n.content, sweep.oldTitle, sweep.newTitle) !== n.content) {
+              swept.push(n.id)
+            }
+          }
+        }
         set((state) => ({
           notes: state.notes.map((n) => {
             if (n.id === id) return { ...n, ...patch, updatedAt: Date.now() }
@@ -1797,6 +1819,7 @@ export const useAppStore = create<AppState>()(
             return n
           })
         }))
+        for (const sweptId of swept) void get().saveNoteToVault(sweptId)
       },
       setNoteEmoji: (id, emoji) =>
         set((state) => ({
@@ -2424,6 +2447,8 @@ export const useAppStore = create<AppState>()(
         set({ routines, plannerError: null })
         saveRoutineFile(routines, set)
       },
+      setLocalCalendarName: (localCalendarName) =>
+        set({ localCalendarName: localCalendarName.trim() || LOCAL_CALENDAR_NAME }),
       setLocalCalendarColor: (localCalendarColor) => set({ localCalendarColor }),
       addSubscription: async ({ name, url, color }) => {
         const id = uid()
@@ -2443,6 +2468,24 @@ export const useAppStore = create<AppState>()(
         await get().refreshSubscription(id)
         return id
       },
+      addLocalCalendar: ({ name, color }) => {
+        const id = uid()
+        const calendar: CalendarSubscription = {
+          id,
+          name: name.trim() || 'New calendar',
+          url: '',
+          color,
+          enabled: true,
+          lastFetched: null,
+          error: null,
+          events: [],
+          local: true
+        }
+        const subscriptions = [...get().subscriptions, calendar]
+        set({ subscriptions })
+        saveCalendarsFile(subscriptions, set)
+        return id
+      },
       updateSubscription: (id, patch) => {
         const subscriptions = get().subscriptions.map((sub) =>
           sub.id === id ? { ...sub, ...patch } : sub
@@ -2454,10 +2497,19 @@ export const useAppStore = create<AppState>()(
         const subscriptions = get().subscriptions.filter((sub) => sub.id !== id)
         set({ subscriptions })
         saveCalendarsFile(subscriptions, set)
+        // A local calendar owns its events; drop them so nothing is orphaned.
+        const removed = get().subscriptions.find((sub) => sub.id === id)
+        if (removed?.local) {
+          const items = get().calendarItems.filter((item) => item.calendarId !== id)
+          if (items.length !== get().calendarItems.length) {
+            set({ calendarItems: items })
+            saveCalendarFile(items, set)
+          }
+        }
       },
       refreshSubscription: async (id) => {
         const sub = get().subscriptions.find((s) => s.id === id)
-        if (!sub) return
+        if (!sub || sub.local) return
         try {
           const text = await window.api.fetchIcs(sub.url)
           const now = Date.now()
@@ -2495,7 +2547,7 @@ export const useAppStore = create<AppState>()(
       },
       refreshAllSubscriptions: async () => {
         const ids = get()
-          .subscriptions.filter((sub) => sub.enabled)
+          .subscriptions.filter((sub) => sub.enabled && !sub.local)
           .map((sub) => sub.id)
         for (const id of ids) {
           await get().refreshSubscription(id)
@@ -2539,6 +2591,7 @@ export const useAppStore = create<AppState>()(
         dismissedTodayEvents: state.dismissedTodayEvents,
         splitTabId: state.splitTabId,
         splitRatio: state.splitRatio,
+        localCalendarName: state.localCalendarName,
         localCalendarColor: state.localCalendarColor,
         alarms: state.alarms,
         timers: state.timers,
@@ -2608,6 +2661,7 @@ export const useAppStore = create<AppState>()(
             | 'dismissedTodayEvents'
             | 'splitTabId'
             | 'splitRatio'
+            | 'localCalendarName'
             | 'localCalendarColor'
             | 'alarms'
             | 'timers'
@@ -2854,6 +2908,10 @@ export const useAppStore = create<AppState>()(
               ? saved.splitTabId
               : null,
           splitRatio: clampSplitRatio(saved.splitRatio),
+          localCalendarName:
+            typeof saved.localCalendarName === 'string' && saved.localCalendarName.trim()
+              ? saved.localCalendarName
+              : LOCAL_CALENDAR_NAME,
           localCalendarColor:
             typeof saved.localCalendarColor === 'string' && saved.localCalendarColor
               ? saved.localCalendarColor

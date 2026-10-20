@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import BlockEditor, { type ChildKind } from '../components/BlockEditor'
 import FindBar from '../components/FindBar'
+import NoteEditor, { type ChildKind } from '../components/NoteEditor'
 import { FlashcardsChildView, MindmapChildView, QuizChildView } from '../components/StudyChild'
-import { BLOCK_START, joinBlocks, splitBlocks } from '../markdown'
 import { addHiddenPage, joinHidden, splitHidden } from '../subpages'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import {
@@ -52,6 +51,9 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   const [dropStatus, setDropStatus] = useState<{ msg: string; error: boolean } | null>(null)
   const dropStatusTimer = useRef<number | null>(null)
   const [findOpen, setFindOpen] = useState(false)
+  // Scrollbars stay hidden app-wide. The note scroller is the one exception:
+  // it reveals a bar only while the pointer is near its right edge.
+  const [scrollbarVisible, setScrollbarVisible] = useState(false)
   const [pageMenu, setPageMenu] = useState<{ x: number; y: number } | null>(null)
   const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null)
   const noteRef = useRef<HTMLElement>(null)
@@ -95,25 +97,22 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     const capture = (): void => {
       const el = document.activeElement
       if (!(el instanceof HTMLElement) || !noteRef.current?.contains(el)) return
-      const blockEl = el.closest<HTMLElement>('[data-block]')
-      if (!blockEl) return
-      const block = Number(blockEl.dataset.block)
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0) return
+      const range = sel.getRangeAt(0)
+      const start =
+        range.startContainer instanceof HTMLElement
+          ? range.startContainer
+          : range.startContainer.parentElement
+      const lineEl = start?.closest<HTMLElement>('[data-line]')
+      if (!lineEl || !noteRef.current.contains(lineEl)) return
+      // The line wrapper is the persisted caret unit: index + character offset.
+      const block = Number(lineEl.dataset.line)
       if (!Number.isInteger(block) || block < 0) return
-      let offset: number
-      if (el instanceof HTMLTextAreaElement) {
-        offset = el.selectionStart
-      } else if (el.isContentEditable) {
-        const sel = window.getSelection()
-        if (!sel || sel.rangeCount === 0) return
-        const range = sel.getRangeAt(0)
-        if (!blockEl.contains(range.startContainer)) return
-        const pre = document.createRange()
-        pre.selectNodeContents(blockEl)
-        pre.setEnd(range.startContainer, range.startOffset)
-        offset = pre.toString().length
-      } else {
-        return
-      }
+      const pre = document.createRange()
+      pre.selectNodeContents(lineEl)
+      pre.setEnd(range.startContainer, range.startOffset)
+      const offset = pre.toString().length
       caretRef.current = { block, offset }
       scheduleViewSave()
     }
@@ -256,6 +255,9 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
       const child = useAppStore.getState().notes.find((n) => n.id === childId)
       const title = child?.title.trim() || 'Untitled page'
       state.updateNote(noteId, { content: addHiddenPage(parent.content, title) })
+      // The parent page unmounts when the child opens, cancelling its debounced
+      // autosave; persist the hidden footer now so nesting survives a restart.
+      void state.saveNoteToVault(noteId)
       return { id: childId, title }
     }
     const base = (parent.title.trim() || 'Untitled').slice(0, 40)
@@ -276,6 +278,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     const child = useAppStore.getState().notes.find((n) => n.id === childId)
     const finalTitle = child?.title.trim() || title
     state.updateNote(noteId, { content: addHiddenPage(parent.content, finalTitle) })
+    void state.saveNoteToVault(noteId)
     return { id: childId, title: finalTitle }
   }
 
@@ -334,45 +337,17 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     const current = state.notes.find((n) => n.id === noteId)
     if (!current || current.deletedAt) return
     const split = splitHidden(current.content)
-    const blocks = splitBlocks(split.body)
-    // Locate the dragged line (first occurrence wins; duplicate sources
-    // share one layout entry anyway).
-    let from = -1
-    let lineAt = -1
-    for (let i = 0; i < blocks.length; i++) {
-      const at = blocks[i].split('\n').findIndex((line) => line.includes(`](${src})`))
-      if (at >= 0) {
-        from = i
-        lineAt = at
-        break
-      }
-    }
+    // The editor is line-based, so picture drops map 1:1 to line indexes.
+    const lines = split.body.length > 0 ? split.body.split('\n') : []
+    const from = lines.findIndex((line) => line.includes(`](${src})`))
     if (from < 0) return
-    const sourceLines = blocks[from].split('\n')
-    const [imgLine] = sourceLines.splice(lineAt, 1)
-    if (sourceLines.some((line) => line.trim())) blocks[from] = sourceLines.join('\n')
-    else blocks.splice(from, 1)
-    if (blocks.length === 0) {
-      state.updateNote(noteId, { content: joinHidden(imgLine, split.hidden) })
-      state.setImageSide(noteId, src, target.side)
-      return
-    }
+    const [imgLine] = lines.splice(from, 1)
     let to = target.blockIndex
     if (from < to) to -= 1
-    to = Math.max(0, Math.min(to, blocks.length - 1))
-    // Merge into plain paragraphs; anything structured (lists, quotes, code)
-    // gets the picture as its own adjacent block instead.
-    const dest = blocks[to].split('\n')[0] ?? ''
-    if (BLOCK_START.test(dest)) {
-      blocks.splice(target.above ? to : to + 1, 0, imgLine)
-    } else {
-      const lines = blocks[to].split('\n')
-      if (target.above) lines.unshift(imgLine)
-      else lines.push(imgLine)
-      blocks[to] = lines.join('\n')
-    }
+    to = Math.max(0, Math.min(to, lines.length))
+    lines.splice(to, 0, imgLine)
     state.setImageSide(noteId, src, target.side)
-    state.updateNote(noteId, { content: joinHidden(joinBlocks(blocks), split.hidden) })
+    state.updateNote(noteId, { content: joinHidden(lines.join('\n'), split.hidden) })
     // Commit any in-progress edit first so the rewrite renders immediately.
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   }
@@ -638,7 +613,15 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
 
       <div
         ref={scrollRef}
-        className={`note__scroll${dropActive ? ' is-drop-target' : ''}`}
+        className={`note__scroll${dropActive ? ' is-drop-target' : ''}${
+          scrollbarVisible ? ' is-scrollbar-visible' : ''
+        }`}
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          const nearRight = rect.right - event.clientX <= 22
+          setScrollbarVisible((visible) => (visible === nearRight ? visible : nearRight))
+        }}
+        onMouseLeave={() => setScrollbarVisible(false)}
         onScroll={() => {
           scrollTopRef.current = scrollRef.current?.scrollTop ?? 0
           scheduleViewSave()
@@ -680,13 +663,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
                   !event.altKey
                 ) {
                   event.preventDefault()
-                  const blocks = document.querySelector('.blocks')
-                  const editor = blocks?.querySelector<HTMLTextAreaElement>('textarea')
-                  if (editor) {
-                    editor.focus()
-                  } else {
-                    ;(blocks?.querySelector<HTMLElement>('.block') as HTMLElement | null)?.click()
-                  }
+                  noteRef.current?.querySelector<HTMLElement>('.note-editor')?.focus()
                 }
               }}
             />
@@ -705,14 +682,15 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
               </div>
             </div>
           ) : (
-            <BlockEditor
+            <NoteEditor
+              key={note.id}
               value={body}
               onChange={(nextBody) => {
                 const current = useAppStore.getState().notes.find((n) => n.id === note.id)
                 const split = splitHidden(current?.content ?? '')
                 updateNote(note.id, { content: joinHidden(nextBody, split.hidden) })
               }}
-              placeholder="Write anything…  # heading · - list · **bold** · $math$ · ```js runs · Shift+Enter new block"
+              placeholder="Write anything…  # heading · - list · 1. list · > quote · / commands · **bold**"
               images={imagesControls}
               onCreateChild={insertChildLink}
               initialCaret={note.caret ?? null}
