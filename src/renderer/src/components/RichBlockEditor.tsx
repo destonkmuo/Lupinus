@@ -62,7 +62,7 @@ interface RichBlockEditorProps {
   /** Shift+click: fall back to editing this block's raw markdown. */
   onRequestRaw?: () => void
   /** Where to drop the caret when the editor first mounts. */
-  initialCaret?: 'start' | 'end'
+  initialCaret?: 'start' | 'end' | number
 }
 
 /** Character offset of the caret within `el`'s text. */
@@ -189,7 +189,7 @@ function RichBlockEditor({
   const [slash, setSlash] = useState<string | null>(null)
   const [slashSel, setSlashSel] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
-  const caretRef = useRef<'start' | 'end'>(initialCaret)
+  const caretRef = useRef<'start' | 'end' | number>(initialCaret)
   // The browser owns the DOM while typing: seeded HTML is applied only on
   // mount/reseed, never on unrelated re-renders, or React would stomp
   // in-flight edits back to the seed. (html always changes with key, so both
@@ -227,6 +227,11 @@ function RichBlockEditor({
     const el = ref.current
     if (!el) return
     el.focus()
+    if (typeof caretRef.current === 'number') {
+      setCaretOffset(el, caretRef.current)
+      caretRef.current = 'end'
+      return
+    }
     // List/quote reseeds have no text node to measure against when empty, so
     // target the item/paragraph directly; otherwise the caret would land
     // outside the structure and typing would escape it.

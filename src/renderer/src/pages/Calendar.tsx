@@ -83,6 +83,9 @@ function Calendar(): React.JSX.Element {
   const [dialog, setDialog] = useState<PlannerDialogTarget | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
   const [hidden, setHidden] = useState<Set<string>>(new Set())
+  // Month view can hide repeating events so a single occurrence doesn't
+  // drown out the rest of the grid.
+  const [hideRepeating, setHideRepeating] = useState(false)
 
   const today = todayISO()
   const openCount = tasks.filter((t) => !isTaskDone(t)).length
@@ -140,6 +143,7 @@ function Calendar(): React.JSX.Element {
     for (const source of sources) {
       if (!isSourceVisible(source, hidden)) continue
       for (const item of itemsFor(source.id)) {
+        if (hideRepeating && view === 'month' && item.recurrence.length > 0) continue
         for (const occurrence of expandItemDates(item, rangeStart, rangeEnd)) {
           const start = itemStartTime(item)
           const end = itemEndTime(item)
@@ -189,7 +193,17 @@ function Calendar(): React.JSX.Element {
       })
     }
     return map
-  }, [sources, calendarItems, subscriptions, tasks, rangeStart, rangeEnd, hidden])
+  }, [
+    sources,
+    calendarItems,
+    subscriptions,
+    tasks,
+    rangeStart,
+    rangeEnd,
+    hidden,
+    hideRepeating,
+    view
+  ])
 
   const configured = sources.filter((s) => s.id !== LOCAL_CALENDAR_ID)
 
@@ -271,6 +285,17 @@ function Calendar(): React.JSX.Element {
               </button>
             ))}
           </div>
+          {view === 'month' && (
+            <button
+              type="button"
+              className={`btn btn--ghost${hideRepeating ? ' is-active' : ''}`}
+              aria-pressed={hideRepeating}
+              title={hideRepeating ? 'Show repeating events' : 'Hide repeating events'}
+              onClick={() => setHideRepeating((value) => !value)}
+            >
+              {hideRepeating ? 'Show repeating' : 'Hide repeating'}
+            </button>
+          )}
           <div className="cal__cals">
             <button
               type="button"

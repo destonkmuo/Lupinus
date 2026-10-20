@@ -823,10 +823,24 @@ body {
   background: transparent;
   color: var(--ev-c-text-3);
   cursor: pointer;
+  /* Revealed only while the pointer is over the sidebar (or keyboard focus
+     lands inside it) so the strip stays calm at rest. */
+  opacity: 0;
+  pointer-events: none;
   transition:
     background-color 140ms ease,
     color 140ms ease,
+    opacity 160ms ease,
     transform 140ms ease;
+}
+
+.sidebar:hover .sidebar__space-add,
+.sidebar:focus-within .sidebar__space-add,
+.sidebar:hover .sidebar__trash-btn,
+.sidebar:focus-within .sidebar__trash-btn,
+.sidebar__trash-btn.is-active {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .sidebar__space-add:hover {
@@ -849,9 +863,12 @@ body {
   background: transparent;
   color: var(--ev-c-text-3);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
   transition:
     background-color 140ms ease,
-    color 140ms ease;
+    color 140ms ease,
+    opacity 160ms ease;
 }
 
 .sidebar__trash-btn:hover,
@@ -3952,6 +3969,11 @@ button.note__crumb:hover {
   background: rgba(var(--ink), 0.12);
 }
 
+.btn--ghost.is-active {
+  background: rgba(var(--ink), 0.14);
+  box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1);
+}
+
 /* Non-interactive state readout pill (states are voice-driven, not clickable). */
 .state-pill {
   display: inline-flex;
@@ -4942,9 +4964,16 @@ button.cal-week__day:hover {
 
 .cal-hour span {
   position: absolute;
-  top: -8px;
+  top: 0;
   right: 6px;
+  /* Sit centred on the hour rule, with a small background notch so the
+     line never strikes through the number. */
+  transform: translateY(-50%);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--main-bg);
   font-size: 10px;
+  line-height: 1.35;
   color: var(--ev-c-text-3);
 }
 
@@ -8333,10 +8362,10 @@ div.home__today-row:hover {
 }
 
 /* Windows/Linux: no floating traffic lights, so the pill starts level with the
-   search bar and reaches the bottom of the window. */
+   search bar and keeps a small inset from the bottom edge. */
 :root:not(.is-mac) .rail__bar {
   top: 8px;
-  bottom: 0;
+  bottom: 4px;
 }
 
 .rail__group {

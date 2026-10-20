@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import BlockEditor, { type ChildKind } from '../components/BlockEditor'
 import FindBar from '../components/FindBar'
 import { FlashcardsChildView, MindmapChildView, QuizChildView } from '../components/StudyChild'
@@ -22,7 +22,7 @@ import {
   ChevronRightIcon
 } from '../components/icons'
 import { parseWikiLinks, resolveWikiTarget } from '../notes'
-import { useAppStore, type ImageLayout } from '../store/appStore'
+import { useAppStore, type ImageLayout, type NoteCaret } from '../store/appStore'
 
 /** Stable empty layout so memo deps don't churn. */
 const NO_LAYOUT: Record<string, ImageLayout> = {}
@@ -55,6 +55,94 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   const [pageMenu, setPageMenu] = useState<{ x: number; y: number } | null>(null)
   const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null)
   const noteRef = useRef<HTMLElement>(null)
+
+  // View state is persisted per note so reopening lands where the reader left
+  // off: scroll offset plus the block/caret being edited.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollTopRef = useRef(note?.scrollTop ?? 0)
+  const caretRef = useRef<NoteCaret | null>(note?.caret ?? null)
+  const viewRestoredRef = useRef(false)
+  const viewSaveTimer = useRef<number | null>(null)
+
+  const persistViewNow = (): void => {
+    useAppStore.getState().setNoteView(noteId, {
+      scrollTop: scrollTopRef.current,
+      caret: caretRef.current
+    })
+  }
+
+  const scheduleViewSave = (): void => {
+    if (viewSaveTimer.current !== null) return
+    viewSaveTimer.current = window.setTimeout(() => {
+      viewSaveTimer.current = null
+      persistViewNow()
+    }, 250)
+  }
+
+  // Restore once the note's DOM exists (the parent mounts after its children).
+  useLayoutEffect(() => {
+    if (viewRestoredRef.current) return
+    const el = scrollRef.current
+    if (!el || !note) return
+    viewRestoredRef.current = true
+    scrollTopRef.current = note.scrollTop ?? 0
+    caretRef.current = note.caret ?? null
+    el.scrollTop = scrollTopRef.current
+  })
+
+  // Track the caret only while an editor inside this note owns the selection.
+  useEffect(() => {
+    const capture = (): void => {
+      const el = document.activeElement
+      if (!(el instanceof HTMLElement) || !noteRef.current?.contains(el)) return
+      const blockEl = el.closest<HTMLElement>('[data-block]')
+      if (!blockEl) return
+      const block = Number(blockEl.dataset.block)
+      if (!Number.isInteger(block) || block < 0) return
+      let offset: number
+      if (el instanceof HTMLTextAreaElement) {
+        offset = el.selectionStart
+      } else if (el.isContentEditable) {
+        const sel = window.getSelection()
+        if (!sel || sel.rangeCount === 0) return
+        const range = sel.getRangeAt(0)
+        if (!blockEl.contains(range.startContainer)) return
+        const pre = document.createRange()
+        pre.selectNodeContents(blockEl)
+        pre.setEnd(range.startContainer, range.startOffset)
+        offset = pre.toString().length
+      } else {
+        return
+      }
+      caretRef.current = { block, offset }
+      scheduleViewSave()
+    }
+    const node = noteRef.current
+    document.addEventListener('selectionchange', capture)
+    node?.addEventListener('keyup', capture, true)
+    node?.addEventListener('mouseup', capture, true)
+    return () => {
+      document.removeEventListener('selectionchange', capture)
+      node?.removeEventListener('keyup', capture, true)
+      node?.removeEventListener('mouseup', capture, true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId])
+
+  // Flush the latest view state when the note closes or its tab goes away.
+  useEffect(
+    () => () => {
+      if (viewSaveTimer.current !== null) {
+        window.clearTimeout(viewSaveTimer.current)
+        viewSaveTimer.current = null
+      }
+      useAppStore.getState().setNoteView(noteId, {
+        scrollTop: scrollTopRef.current,
+        caret: caretRef.current
+      })
+    },
+    [noteId]
+  )
 
   // Ctrl/Cmd+F opens find-in-note. preventDefault stops the (absent) native
   // find so the shortcut never feels dead.
@@ -548,7 +636,14 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         </p>
       )}
 
-      <div className={`note__scroll${dropActive ? ' is-drop-target' : ''}`}>
+      <div
+        ref={scrollRef}
+        className={`note__scroll${dropActive ? ' is-drop-target' : ''}`}
+        onScroll={() => {
+          scrollTopRef.current = scrollRef.current?.scrollTop ?? 0
+          scheduleViewSave()
+        }}
+      >
         <div
           className="note__doc"
           onContextMenu={(event) => {
@@ -620,6 +715,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
               placeholder="Write anything…  # heading · - list · **bold** · $math$ · ```js runs · Shift+Enter new block"
               images={imagesControls}
               onCreateChild={insertChildLink}
+              initialCaret={note.caret ?? null}
             />
           )}
         </div>

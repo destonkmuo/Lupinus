@@ -33,6 +33,8 @@ interface BlockEditorProps {
    * the `[[link]]` markdown to embed at the caret (null = failed).
    */
   onCreateChild?: (kind: ChildKind) => string | null
+  /** Restore the caret into this block when the editor first mounts. */
+  initialCaret?: { block: number; offset: number } | null
 }
 
 /**
@@ -53,10 +55,15 @@ function BlockEditor({
   onChange,
   placeholder,
   images,
-  onCreateChild
+  onCreateChild,
+  initialCaret
 }: BlockEditorProps): React.JSX.Element {
   const [blocks, setBlocks] = useState<string[]>(() => splitBlocks(value))
-  const [active, setActive] = useState<number | null>(null)
+  const restoreBlock =
+    initialCaret && initialCaret.block >= 0 && initialCaret.block < blocks.length
+      ? initialCaret.block
+      : null
+  const [active, setActive] = useState<number | null>(restoreBlock)
   // Multi-block selection: sorted list of selected row indices while NOT editing.
   // Shift+Click extends from the anchor, Cmd/Ctrl+Click toggles one row.
   const [selected, setSelected] = useState<number[]>([])
@@ -68,7 +75,9 @@ function BlockEditor({
   const [slash, setSlash] = useState<{ index: number; token: string } | null>(null)
   const [slashSel, setSlashSel] = useState(0)
   // Where a freshly mounted rich editor should drop its caret.
-  const [caretHint, setCaretHint] = useState<'start' | 'end'>('end')
+  const [caretHint, setCaretHint] = useState<'start' | 'end' | number>(
+    restoreBlock !== null && initialCaret ? Math.max(0, initialCaret.offset) : 'end'
+  )
   // Raw-markdown escape hatch: press-and-hold (or Shift+click) a block to edit
   // its markdown source instead of the formatted surface.
   const [rawMode, setRawMode] = useState(false)
@@ -77,7 +86,9 @@ function BlockEditor({
   // the rule, instead of swapping in a raw textarea mid-keystroke.
   const [activeRich, setActiveRich] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
-  const caretRef = useRef<number | null>(null)
+  const caretRef = useRef<number | null>(
+    restoreBlock !== null && initialCaret ? Math.max(0, initialCaret.offset) : null
+  )
   const indentCaretRef = useRef<number | null>(null)
   // Press-and-hold (M1) on a rendered block opens its raw markdown source.
   const longPressTimer = useRef<number | null>(null)

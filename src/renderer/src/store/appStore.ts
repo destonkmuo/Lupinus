@@ -49,6 +49,16 @@ export interface Note {
   spaceId?: string
   /** Custom page icon (emoji). Empty/missing = the default page icon. */
   emoji?: string
+  /** Last scroll offset in the note view, restored when it reopens. */
+  scrollTop?: number
+  /** Last text caret, restored when the note reopens. */
+  caret?: NoteCaret
+}
+
+/** Caret position inside a note: block index plus character offset. */
+export interface NoteCaret {
+  block: number
+  offset: number
 }
 
 export interface NoteSpace {
@@ -347,6 +357,8 @@ interface AppState {
   createNote: (title?: string, sectionId?: string | null, spaceId?: string) => string
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'content'>>) => void
   setNoteEmoji: (id: string, emoji: string) => void
+  /** Persist view state (scroll + caret) without marking the note edited. */
+  setNoteView: (id: string, view: { scrollTop?: number; caret?: NoteCaret | null }) => void
   deleteNote: (id: string) => void
   initVault: (force?: boolean) => Promise<void>
   refreshVault: () => Promise<void>
@@ -1792,6 +1804,24 @@ export const useAppStore = create<AppState>()(
           // note doesn't jump in recency-sorted lists.
           notes: state.notes.map((n) => (n.id === id ? { ...n, emoji: emoji.trim() } : n))
         })),
+      setNoteView: (id, view) =>
+        set((state) => {
+          const note = state.notes.find((n) => n.id === id)
+          if (!note) return {}
+          const scrollTop =
+            view.scrollTop !== undefined ? Math.max(0, Math.round(view.scrollTop)) : note.scrollTop
+          const caret = view.caret !== undefined ? (view.caret ?? undefined) : note.caret
+          if (
+            note.scrollTop === scrollTop &&
+            note.caret?.block === caret?.block &&
+            note.caret?.offset === caret?.offset
+          ) {
+            return {}
+          }
+          return {
+            notes: state.notes.map((n) => (n.id === id ? { ...n, scrollTop, caret } : n))
+          }
+        }),
       deleteNote: (id) => {
         // Trash, not destroy: the record keeps its order slot so restore
         // lands it back in place. initVault auto-purges trash older
