@@ -518,6 +518,9 @@ body {
 /* ------------------------------------------------------------------ sidebar */
 
 .sidebar {
+  /* Height of the collapsed Today card. The bookmark strip matches it
+     exactly, so both sections read as the same size. */
+  --sidebar-today-h: 52px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -658,7 +661,8 @@ body {
   display: grid;
   place-items: center;
   flex: 1 0 54px;
-  height: 54px;
+  /* Same box height as the collapsed Today card. */
+  height: var(--sidebar-today-h);
   min-width: 0;
   padding: 0;
   border: 1px solid transparent;
@@ -698,7 +702,7 @@ body {
 .sidebar__fav-emoji {
   display: block;
   line-height: 1;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .sidebar__spacebar {
@@ -1373,6 +1377,12 @@ body {
   background: rgba(var(--ink), 0.05);
 }
 
+/* With the bookmark strip present, the Today card tightens its bottom margin
+   so the gap above the tiles matches the gap above the card (search → Today). */
+.sidebar__events:has(+ .sidebar__favorites) {
+  margin-bottom: 6px;
+}
+
 @keyframes today-row-in {
   from {
     opacity: 0;
@@ -1471,6 +1481,11 @@ body {
    card's own padding and leave a gap that looks off-center. */
 .sidebar__events.is-collapsed .sidebar__today-head {
   padding-bottom: 0;
+}
+
+/* Collapsed card height — the bookmark strip is sized against the same value. */
+.sidebar__events.is-collapsed {
+  min-height: var(--sidebar-today-h);
 }
 
 .sidebar__today-head .sidebar__section-head--toggle {

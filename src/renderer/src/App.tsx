@@ -12,6 +12,7 @@ import Spotlight from './components/Spotlight'
 import { XIcon } from './components/icons'
 import { useTheme } from './theme'
 import { NAV_LABELS, isInlineNav } from './nav'
+import { isSpaceSwipeActive } from './gestures'
 import Agent from './pages/Agent'
 import Calendar from './pages/Calendar'
 import Email from './pages/Email'
@@ -452,14 +453,21 @@ function App(): React.JSX.Element {
     content = renderTab(activeTab)
   }
 
-  // In the main window a horizontal swipe walks page (tab) history, matching
-  // the browser gesture: swipe right → back, swipe left → forward. Space
+  // In the main window a horizontal swipe walks page history, matching the
+  // browser gesture: swipe right → back, swipe left → forward. Space
   // switching is reserved for the sidebar. Vertical scrolling is ignored, and
-  // horizontally scrollable regions keep their own behaviour.
+  // horizontally scrollable regions keep their own behaviour. Unlike inputs,
+  // the note body is allowed: swiping anywhere on a page navigates history.
   const onHistoryWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
     if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) * 1.2) return
     const target = event.target as HTMLElement
-    if (target.closest('input, textarea, [contenteditable="true"], .tabbar__list, pre')) {
+    // Sidebar/rail gestures belong to space switching, and a space swipe owns
+    // the whole motion so it can never also step page history.
+    if (target.closest('.sidebar, .rail') || isSpaceSwipeActive()) {
+      historyWheelRef.current.accum = 0
+      return
+    }
+    if (target.closest('input, textarea, .tabbar__list, pre')) {
       return
     }
     const now = performance.now()
@@ -505,15 +513,15 @@ function App(): React.JSX.Element {
           className={`app__content${splitTab ? ' app__content--split' : ''}`}
           onWheel={onHistoryWheel}
           onTouchStart={(event) => {
-            if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]'))
-              return
+            const target = event.target as HTMLElement
+            if (target.closest('input, textarea, .sidebar, .rail') || isSpaceSwipeActive()) return
             const touch = event.touches[0]
             historySwipeRef.current = { x: touch.clientX, y: touch.clientY }
           }}
           onTouchEnd={(event) => {
             const start = historySwipeRef.current
             historySwipeRef.current = null
-            if (!start) return
+            if (!start || isSpaceSwipeActive()) return
             const touch = event.changedTouches[0]
             const dx = touch.clientX - start.x
             const dy = touch.clientY - start.y

@@ -17,6 +17,11 @@ import icon from '../../resources/icon.png?asset'
 // gesture at ring time), so disable the autoplay gate for this app window.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
+// Horizontal trackpad swipes are handled in-app (sidebar space switch, page
+// history on the note surface). Keep Chromium's overscroll back/forward
+// navigation from firing alongside those gestures.
+app.commandLine.appendSwitch('disable-features', 'OverscrollHistoryNavigation')
+
 // Must be declared before the app is ready so the scheme is privileged.
 registerAlarmScheme()
 registerMediaScheme()

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { isInlineNav, NAV_BY_KEY } from '../nav'
+import { markSpaceSwipe } from '../gestures'
 import {
   buildNoteGraph,
   orderedNotes,
@@ -1686,7 +1687,12 @@ function Sidebar(): React.JSX.Element {
     const index = spaces.findIndex((space) => space.id === activeSpaceId)
     if (index < 0) return
     const next = spaces[(index + step + spaces.length) % spaces.length]
-    if (next) goToSpace(next.id)
+    if (next) {
+      // Claim the gesture: the content's page-history swipe must ignore the
+      // same trackpad motion while the space switch settles.
+      markSpaceSwipe()
+      goToSpace(next.id)
+    }
   }
 
   // Trackpad two-finger horizontal swipe.
@@ -1700,6 +1706,8 @@ function Sidebar(): React.JSX.Element {
       )
     )
       return
+    // The sidebar owns horizontal swipes here; never let one reach page history.
+    event.stopPropagation()
     const now = event.timeStamp
     const gesture = swipeRef.current
     if (now - gesture.lastAt > SWIPE_GAP_MS) {
@@ -1826,7 +1834,7 @@ function Sidebar(): React.JSX.Element {
                     }}
                     {...favoriteDragProps(token)}
                   >
-                    <Icon size={18} />
+                    <Icon size={17} />
                   </button>
                 )
               }
@@ -1854,7 +1862,7 @@ function Sidebar(): React.JSX.Element {
                       {emoji}
                     </span>
                   ) : (
-                    <FileTextIcon size={18} />
+                    <FileTextIcon size={17} />
                   )}
                 </button>
               )

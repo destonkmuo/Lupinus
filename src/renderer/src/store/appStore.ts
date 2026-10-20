@@ -507,23 +507,24 @@ function toFront(recency: string[], id: string): string[] {
 const MAX_TAB_HISTORY = 100
 
 /**
- * Record a visit: drop any "forward" entries past the cursor, append the tab
- * (unless it repeats the current entry), and cap the length.
+ * Record a page visit: drop any "forward" entries past the cursor, remove any
+ * earlier visit to the same page (each page appears once), append it, and cap
+ * the length.
  */
 function pushHistory(
   history: string[],
   index: number,
-  id: string
+  pageId: string
 ): { tabHistory: string[]; historyIndex: number } {
-  const base = history.slice(0, index + 1)
-  if (base[base.length - 1] !== id) base.push(id)
+  const base = history.slice(0, index + 1).filter((id) => id !== pageId)
+  base.push(pageId)
   const tabHistory = base.slice(-MAX_TAB_HISTORY)
   return { tabHistory, historyIndex: tabHistory.length - 1 }
 }
 
 /**
- * Drop history entries whose tabs no longer exist, keeping the cursor on the
- * same visit where possible.
+ * Drop history entries whose pages no longer exist, remove repeats (keeping
+ * the most recent visit), and keep the cursor on the same visit where possible.
  */
 function pruneHistory(
   history: string[],
@@ -531,12 +532,81 @@ function pruneHistory(
   keep: Set<string>
 ): { tabHistory: string[]; historyIndex: number } {
   const current = history[index]
-  const tabHistory = history.filter((id) => keep.has(id))
+  const seen = new Set<string>()
+  const tabHistory: string[] = []
+  // Walk backwards so a page's latest visit wins; unshift restores order.
+  for (let i = history.length - 1; i >= 0; i--) {
+    const id = history[i]
+    if (!keep.has(id) || seen.has(id)) continue
+    seen.add(id)
+    tabHistory.unshift(id)
+  }
   if (tabHistory.length === 0) return { tabHistory, historyIndex: -1 }
   if (current !== undefined && keep.has(current)) {
     return { tabHistory, historyIndex: tabHistory.indexOf(current) }
   }
   return { tabHistory, historyIndex: Math.min(Math.max(index, 0), tabHistory.length - 1) }
+}
+
+/** Step through page history in `dir`, skipping pages that no longer exist. */
+function historyStep(
+  state: { tabHistory: string[]; historyIndex: number; notes: Note[] },
+  dir: -1 | 1
+): { index: number; noteId: string } | null {
+  let index = state.historyIndex + dir
+  while (index >= 0 && index < state.tabHistory.length) {
+    const noteId = state.tabHistory[index]
+    if (state.notes.some((note) => note.id === noteId && !note.deletedAt)) {
+      return { index, noteId }
+    }
+    index += dir
+  }
+  return null
+}
+
+/** Show a note without recording a new history entry (back/forward). */
+function activateNote(
+  state: {
+    tabs: Tab[]
+    activeTabId: string | null
+    activeNav: NavKey | null
+    tabRecency: string[]
+  },
+  noteId: string
+): {
+  tabs?: Tab[]
+  activeTabId: string
+  activeNav: null
+  tabRecency: string[]
+} {
+  const existing = state.tabs.find((tab) => tab.kind === 'note' && tab.noteId === noteId)
+  if (existing) {
+    return {
+      activeTabId: existing.id,
+      activeNav: null,
+      tabRecency: toFront(state.tabRecency, existing.id)
+    }
+  }
+  // Reuse the current note tab when there is one, matching openNoteInCurrentTab.
+  const active =
+    state.activeNav === null ? state.tabs.find((tab) => tab.id === state.activeTabId) : null
+  if (active && active.kind === 'note') {
+    return {
+      tabs: state.tabs.map((tab) =>
+        tab.id === active.id && tab.kind === 'note' ? { ...tab, noteId } : tab
+      ),
+      activeTabId: active.id,
+      activeNav: null,
+      tabRecency: toFront(state.tabRecency, active.id)
+    }
+  }
+  const tab = noteTab(noteId)
+  return {
+    tabs: [...state.tabs, tab],
+    activeTabId: tab.id,
+    activeNav: null,
+    tabRecency: toFront(state.tabRecency, tab.id)
+  }
 }
 
 /** Fresh, empty tab bar for a space that has never held tabs. */
@@ -596,7 +666,11 @@ function restoreSpaceTabs(snap: SpaceTabs | undefined, notes: Note[]): SpaceTabs
   const activeTabId =
     base.activeTabId !== null && tabIds.has(base.activeTabId) ? base.activeTabId : null
   const tabRecency = base.tabRecency.filter((id) => tabIds.has(id))
-  const history = pruneHistory(base.tabHistory, base.historyIndex, tabIds)
+  const history = pruneHistory(
+    base.tabHistory,
+    base.historyIndex,
+    new Set(tabs.map((t) => t.noteId))
+  )
   const tabGroups = base.tabGroups.filter((g) => g && typeof g.id === 'string')
   const groupIds = new Set(tabGroups.map((g) => g.id))
   const tabGroup: Record<string, string> = {}
@@ -1193,36 +1267,32 @@ export const useAppStore = create<AppState>()(
           return { spaces: [...without.slice(0, to), dragged, ...without.slice(to)] }
         }),
       setActiveTab: (id) =>
-        set((state) => ({
-          activeTabId: id,
-          activeNav: null,
-          tabRecency: toFront(state.tabRecency, id),
-          ...pushHistory(state.tabHistory, state.historyIndex, id)
-        })),
-      goBackTab: () =>
         set((state) => {
-          const index = state.historyIndex - 1
-          if (index < 0) return {}
-          const id = state.tabHistory[index]
-          if (!state.tabs.some((t) => t.id === id)) return {}
+          const tab = state.tabs.find((t) => t.id === id)
+          if (!tab) return {}
           return {
             activeTabId: id,
             activeNav: null,
-            historyIndex: index,
-            tabRecency: toFront(state.tabRecency, id)
+            tabRecency: toFront(state.tabRecency, id),
+            ...pushHistory(state.tabHistory, state.historyIndex, tab.noteId)
+          }
+        }),
+      goBackTab: () =>
+        set((state) => {
+          const step = historyStep(state, -1)
+          if (!step) return {}
+          return {
+            ...activateNote(state, step.noteId),
+            historyIndex: step.index
           }
         }),
       goForwardTab: () =>
         set((state) => {
-          const index = state.historyIndex + 1
-          if (index >= state.tabHistory.length) return {}
-          const id = state.tabHistory[index]
-          if (!state.tabs.some((t) => t.id === id)) return {}
+          const step = historyStep(state, 1)
+          if (!step) return {}
           return {
-            activeTabId: id,
-            activeNav: null,
-            historyIndex: index,
-            tabRecency: toFront(state.tabRecency, id)
+            ...activateNote(state, step.noteId),
+            historyIndex: step.index
           }
         }),
       setCalendarView: (calendarView) => set({ calendarView }),
@@ -1325,7 +1395,7 @@ export const useAppStore = create<AppState>()(
               activeTabId: existing.id,
               activeNav: null,
               tabRecency: toFront(state.tabRecency, existing.id),
-              ...pushHistory(state.tabHistory, state.historyIndex, existing.id)
+              ...pushHistory(state.tabHistory, state.historyIndex, noteId)
             }
           const tab = noteTab(noteId)
           return {
@@ -1333,7 +1403,7 @@ export const useAppStore = create<AppState>()(
             activeTabId: tab.id,
             activeNav: null,
             tabRecency: toFront(state.tabRecency, tab.id),
-            ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
+            ...pushHistory(state.tabHistory, state.historyIndex, noteId)
           }
         })
       },
@@ -1346,7 +1416,7 @@ export const useAppStore = create<AppState>()(
               activeTabId: existing.id,
               activeNav: null,
               tabRecency: toFront(state.tabRecency, existing.id),
-              ...pushHistory(state.tabHistory, state.historyIndex, existing.id)
+              ...pushHistory(state.tabHistory, state.historyIndex, noteId)
             }
           // Reuse the active note tab instead of spawning tabs on every click.
           // When arriving from a nav view (activeNav set) there is no note
@@ -1362,7 +1432,7 @@ export const useAppStore = create<AppState>()(
               activeTabId: active.id,
               activeNav: null,
               tabRecency: toFront(state.tabRecency, active.id),
-              ...pushHistory(state.tabHistory, state.historyIndex, active.id)
+              ...pushHistory(state.tabHistory, state.historyIndex, noteId)
             }
           }
           const tab = noteTab(noteId)
@@ -1371,7 +1441,7 @@ export const useAppStore = create<AppState>()(
             activeTabId: tab.id,
             activeNav: null,
             tabRecency: toFront(state.tabRecency, tab.id),
-            ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
+            ...pushHistory(state.tabHistory, state.historyIndex, noteId)
           }
         })
       },
@@ -1383,7 +1453,7 @@ export const useAppStore = create<AppState>()(
           activeTabId: tab.id,
           activeNav: null,
           tabRecency: toFront(state.tabRecency, tab.id),
-          ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
+          ...pushHistory(state.tabHistory, state.historyIndex, noteId)
         }))
         return tab.id
       },
@@ -1475,21 +1545,25 @@ export const useAppStore = create<AppState>()(
           if (tabs.length === 0) activeTabId = null
           // Closing the split tab itself dissolves the split.
           const splitTabId = state.splitTabId === id ? null : state.splitTabId
-          const keep = new Set(tabs.map((t) => t.id))
-          const history = pruneHistory(state.tabHistory, state.historyIndex, keep)
+          const keepTabs = new Set(tabs.map((t) => t.id))
+          const keepPages = new Set(tabs.map((t) => t.noteId))
+          const history = pruneHistory(state.tabHistory, state.historyIndex, keepPages)
+          const activeNoteId = activeTabId
+            ? (tabs.find((t) => t.id === activeTabId)?.noteId ?? null)
+            : null
           return {
             tabs,
             activeTabId,
             activeNav,
             splitTabId,
-            tabRecency: state.tabRecency.filter((t) => keep.has(t)),
+            tabRecency: state.tabRecency.filter((t) => keepTabs.has(t)),
             ...(history.tabHistory.length > 0
               ? history
               : {
-                  tabHistory: activeTabId ? [activeTabId] : [],
-                  historyIndex: activeTabId ? 0 : -1
+                  tabHistory: activeNoteId ? [activeNoteId] : [],
+                  historyIndex: activeNoteId ? 0 : -1
                 }),
-            tabGroup: pruneTabGroupMap(state.tabGroup, keep)
+            tabGroup: pruneTabGroupMap(state.tabGroup, keepTabs)
           }
         }),
       closeAllTabs: () => {
@@ -1511,22 +1585,25 @@ export const useAppStore = create<AppState>()(
               tabGroup: {}
             }
           }
-          const keep = new Set(kept.map((t) => t.id))
+          const keepTabs = new Set(kept.map((t) => t.id))
+          const keepPages = new Set(kept.map((t) => t.noteId))
           const activeTabId: string =
-            state.activeTabId !== null && keep.has(state.activeTabId)
+            state.activeTabId !== null && keepTabs.has(state.activeTabId)
               ? state.activeTabId
               : kept[0].id
-          const history = pruneHistory(state.tabHistory, state.historyIndex, keep)
+          const activeNoteId = kept.find((t) => t.id === activeTabId)?.noteId ?? kept[0].noteId
+          const history = pruneHistory(state.tabHistory, state.historyIndex, keepPages)
           return {
             tabs: kept,
             activeTabId,
             activeNav: null,
-            splitTabId: state.splitTabId && keep.has(state.splitTabId) ? state.splitTabId : null,
-            tabRecency: state.tabRecency.filter((t) => keep.has(t)),
+            splitTabId:
+              state.splitTabId && keepTabs.has(state.splitTabId) ? state.splitTabId : null,
+            tabRecency: state.tabRecency.filter((t) => keepTabs.has(t)),
             ...(history.tabHistory.length > 0
               ? history
-              : { tabHistory: [activeTabId], historyIndex: 0 }),
-            tabGroup: pruneTabGroupMap(state.tabGroup, keep)
+              : { tabHistory: [activeNoteId], historyIndex: 0 }),
+            tabGroup: pruneTabGroupMap(state.tabGroup, keepTabs)
           }
         })
       },
@@ -1541,28 +1618,33 @@ export const useAppStore = create<AppState>()(
           const closing = groupedIds(state)
           if (closing.size === 0) return {}
           const tabs = state.tabs.filter((t) => !closing.has(t.id))
-          const keep = new Set(tabs.map((t) => t.id))
+          const keepTabs = new Set(tabs.map((t) => t.id))
+          const keepPages = new Set(tabs.map((t) => t.noteId))
           const activeTabId: string | null =
-            state.activeTabId !== null && keep.has(state.activeTabId)
+            state.activeTabId !== null && keepTabs.has(state.activeTabId)
               ? state.activeTabId
               : (tabs[0]?.id ?? null)
           // Draining the last note tab lands on Home instead of blank.
           const activeNav: NavKey | null =
             tabs.length === 0 && state.activeNav === null ? 'home' : state.activeNav
-          const history = pruneHistory(state.tabHistory, state.historyIndex, keep)
-          const remainingGroups = new Set(Object.values(pruneTabGroupMap(state.tabGroup, keep)))
+          const activeNoteId = activeTabId
+            ? (tabs.find((t) => t.id === activeTabId)?.noteId ?? null)
+            : null
+          const history = pruneHistory(state.tabHistory, state.historyIndex, keepPages)
+          const remainingGroups = new Set(Object.values(pruneTabGroupMap(state.tabGroup, keepTabs)))
           return {
             tabs,
             activeTabId,
             activeNav,
-            splitTabId: state.splitTabId && keep.has(state.splitTabId) ? state.splitTabId : null,
-            tabRecency: state.tabRecency.filter((t) => keep.has(t)),
+            splitTabId:
+              state.splitTabId && keepTabs.has(state.splitTabId) ? state.splitTabId : null,
+            tabRecency: state.tabRecency.filter((t) => keepTabs.has(t)),
             ...(history.tabHistory.length > 0
               ? history
-              : activeTabId
-                ? { tabHistory: [activeTabId], historyIndex: 0 }
+              : activeNoteId
+                ? { tabHistory: [activeNoteId], historyIndex: 0 }
                 : { tabHistory: [], historyIndex: -1 }),
-            tabGroup: pruneTabGroupMap(state.tabGroup, keep),
+            tabGroup: pruneTabGroupMap(state.tabGroup, keepTabs),
             tabGroups: state.tabGroups.filter((g) => remainingGroups.has(g.id)),
             collapsedTabGroups: state.collapsedTabGroups.filter((id) => remainingGroups.has(id))
           }
@@ -1771,7 +1853,7 @@ export const useAppStore = create<AppState>()(
             activeTabId: tab.id,
             activeNav: null,
             tabRecency: toFront(state.tabRecency, tab.id),
-            ...pushHistory(state.tabHistory, state.historyIndex, tab.id)
+            ...pushHistory(state.tabHistory, state.historyIndex, note.id)
           }
         })
         const created = get().notes.find((n) => n.id === note.id)
@@ -1866,6 +1948,7 @@ export const useAppStore = create<AppState>()(
               ? state.splitTabId
               : null
           const kept = new Set(tabs.map((t) => t.id))
+          const keptPages = new Set(tabs.map((t) => t.noteId))
           return {
             notes,
             tabs,
@@ -1873,7 +1956,7 @@ export const useAppStore = create<AppState>()(
             activeNav,
             splitTabId,
             tabRecency: state.tabRecency.filter((t) => kept.has(t)),
-            ...pruneHistory(state.tabHistory, state.historyIndex, kept),
+            ...pruneHistory(state.tabHistory, state.historyIndex, keptPages),
             tabGroup: pruneTabGroupMap(state.tabGroup, kept)
           }
         })
@@ -1923,6 +2006,7 @@ export const useAppStore = create<AppState>()(
               ? state.splitTabId
               : null
           const keep = new Set(tabs.map((t) => t.id))
+          const keepPages = new Set(tabs.map((t) => t.noteId))
           const noteSection: Record<string, string> = {}
           for (const [noteId, sectionId] of Object.entries(state.noteSection)) {
             if (!ids.has(noteId)) noteSection[noteId] = sectionId
@@ -1935,7 +2019,7 @@ export const useAppStore = create<AppState>()(
             activeNav,
             splitTabId,
             tabRecency: state.tabRecency.filter((t) => keep.has(t)),
-            ...pruneHistory(state.tabHistory, state.historyIndex, keep),
+            ...pruneHistory(state.tabHistory, state.historyIndex, keepPages),
             noteSection,
             noteDividers: state.noteDividers.filter((divider) => !ids.has(divider.container)),
             bookmarks: state.bookmarks.filter(
@@ -1964,6 +2048,7 @@ export const useAppStore = create<AppState>()(
               ? state.splitTabId
               : null
           const kept = new Set(tabs.map((t) => t.id))
+          const keptPages = new Set(tabs.map((t) => t.noteId))
           const noteSection = { ...state.noteSection }
           delete noteSection[id]
           return {
@@ -1974,7 +2059,7 @@ export const useAppStore = create<AppState>()(
             activeNav,
             splitTabId,
             tabRecency: state.tabRecency.filter((t) => kept.has(t)),
-            ...pruneHistory(state.tabHistory, state.historyIndex, kept),
+            ...pruneHistory(state.tabHistory, state.historyIndex, keptPages),
             noteSection,
             noteDividers: state.noteDividers.filter((divider) => divider.container !== id),
             bookmarks: state.bookmarks.filter(
@@ -2082,12 +2167,16 @@ export const useAppStore = create<AppState>()(
               const activeNav: NavKey | null =
                 state.activeNav ?? (withTabs.length === 0 ? 'home' : null)
               const withTabIds = new Set(withTabs.map((t) => t.id))
-              const keptHistory = pruneHistory(state.tabHistory, state.historyIndex, withTabIds)
+              const withPageIds = new Set(withTabs.map((t) => t.noteId))
+              const keptHistory = pruneHistory(state.tabHistory, state.historyIndex, withPageIds)
               // Fresh vaults (or pre-history saves) start history at the
-              // restored tab so Back has somewhere to go.
+              // restored page so Back has somewhere to go.
               if (keptHistory.tabHistory.length === 0 && withTabs.length > 0 && activeTabId) {
-                keptHistory.tabHistory.push(activeTabId)
-                keptHistory.historyIndex = 0
+                const activeNoteId = withTabs.find((t) => t.id === activeTabId)?.noteId
+                if (activeNoteId) {
+                  keptHistory.tabHistory.push(activeNoteId)
+                  keptHistory.historyIndex = 0
+                }
               }
               // Keep the manual order, drop stale ids, surface unpositioned
               // notes (imports, pre-vault notes) up top by recency.
@@ -2725,13 +2814,14 @@ export const useAppStore = create<AppState>()(
         // Recency survives restarts: keep known ids most-recent-first, then
         // append any restored tab the old list never saw.
         const tabIds = new Set(tabs.map((t) => t.id))
+        const pageIds = new Set(tabs.map((t) => t.noteId))
         const tabRecency = [
           ...(saved.tabRecency ?? []).filter((id) => tabIds.has(id)),
           ...tabs.map((t) => t.id).filter((id) => !(saved.tabRecency ?? []).includes(id))
         ]
         // History survives restarts too; it may legitimately be empty when
-        // there are no note tabs (nav views don't record tab history).
-        const pruned = pruneHistory(saved.tabHistory ?? [], saved.historyIndex ?? -1, tabIds)
+        // there are no note pages (nav views don't record page history).
+        const pruned = pruneHistory(saved.tabHistory ?? [], saved.historyIndex ?? -1, pageIds)
         const tabHistory = pruned.tabHistory
         const historyIndex = pruned.historyIndex
         const messages = (saved.messages ?? []).slice(-MAX_CHAT_MESSAGES)
