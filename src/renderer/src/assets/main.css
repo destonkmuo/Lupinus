@@ -3261,6 +3261,81 @@ button.note__crumb:hover {
   background: rgba(var(--ink), 0.035);
 }
 
+/* Explicit blocks: consecutive rows wrapped in `{ … }` form one movable card.
+   Each row keeps its own markdown kind, so a block can hold a heading, a math
+   section, a todo, and a paragraph at once. */
+.note-editor .nl[data-block] {
+  background: rgba(var(--ink), 0.028);
+  box-shadow: inset 2px 0 0 rgba(var(--ink), 0.12);
+}
+
+.note-editor .nl[data-block]:hover {
+  background: rgba(var(--ink), 0.05);
+}
+
+.note-editor .nl[data-block].nl--block-first {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+
+.note-editor .nl[data-block].nl--block-last {
+  margin-bottom: 6px;
+  padding-bottom: 7px;
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+
+.note-editor .nl--block-first.ne-block-hover {
+  background: rgba(var(--ink), 0.05);
+}
+
+/* Block drag handle, parked in the left gutter of the first row. */
+.note-editor .ne-block__grip {
+  position: absolute;
+  left: -20px;
+  top: 5px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 18px;
+  border-radius: 5px;
+  color: var(--ev-c-text-2);
+  opacity: 0;
+  cursor: grab;
+  user-select: none;
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease;
+}
+
+.note-editor .nl--block-first:hover .ne-block__grip,
+.note-editor .nl--block-first.ne-block-hover .ne-block__grip {
+  opacity: 0.5;
+}
+
+.note-editor .ne-block__grip:hover {
+  opacity: 1;
+  background: rgba(var(--ink), 0.09);
+}
+
+.note-editor .ne-block__grip:active {
+  cursor: grabbing;
+}
+
+.note-editor .nl--dragging {
+  opacity: 0.45;
+}
+
+.note-editor .nl--drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.note-editor .nl--drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .note-editor .nl--heading {
   margin-top: 12px;
   margin-bottom: 2px;

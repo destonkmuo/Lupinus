@@ -1,7 +1,18 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { BULLET, FENCE, HEADING, ORDERED, QUOTE, RULE, TASK } from '../markdown'
+import {
+  BULLET,
+  FENCE,
+  HEADING,
+  ORDERED,
+  QUOTE,
+  RULE,
+  TASK,
+  compactBlockContent,
+  compactBlockLine,
+  scanBlockMarkers
+} from '../markdown'
 import { normalizeUrl, trimUrl, urlAtEnd } from '../links'
 import { escapeAttr, escapeHtml, inlineFromDom, inlineToHtml, inlineTokenAtEnd } from '../richText'
 import { resolveImageSrc, type ImageControls } from '../images'
@@ -18,6 +29,9 @@ import SlashMenu from './SlashMenu'
 
 export type { ChildKind } from '../slash'
 
+/** Native DnD payload marking a drag as a block reorder (not a picture). */
+const BLOCK_MIME = 'application/x-seemo-note-block'
+
 type LineKind =
   'paragraph' | 'heading' | 'quote' | 'bullet' | 'ordered' | 'task' | 'rule' | 'code' | 'math'
 
@@ -27,6 +41,15 @@ interface LineSpec {
   level?: number
   checked?: boolean
   lang?: string
+  /** Explicit block group (`{ … }`) this line belongs to. */
+  block?: string
+}
+
+/** Unique id for a block created while editing. */
+let blockGroupSeq = 0
+function nextBlockId(): string {
+  blockGroupSeq += 1
+  return `blk-${Date.now().toString(36)}-${blockGroupSeq}`
 }
 
 interface RenderOptions {
@@ -41,12 +64,39 @@ const LIST_KINDS: ReadonlySet<LineKind> = new Set(['bullet', 'ordered', 'task'])
 /** Strip the leading block marker from a source line, keeping its content. */
 function parseLines(source: string): LineSpec[] {
   const lines = source.replace(/\r\n?/g, '\n').split('\n')
+  const { opens, closes } = scanBlockMarkers(lines)
   const out: LineSpec[] = []
+  let block: string | undefined
+  let blockSeq = 0
   let i = 0
 
   while (i < lines.length) {
+    // Explicit block delimiters (`{` … `}`) are structure, not content.
+    if (opens.has(i)) {
+      block = `doc-${++blockSeq}`
+      i += 1
+      continue
+    }
+    if (closes.has(i)) {
+      block = undefined
+      i += 1
+      continue
+    }
+
     const raw = lines[i]
     const trimmed = raw.trim()
+
+    // A compact one-line block: `{ - [ ] task }`.
+    if (block === undefined) {
+      const compact = compactBlockContent(raw)
+      if (compact !== null) {
+        const id = `doc-${++blockSeq}`
+        const specs = parseLines(compact)
+        out.push(...specs.map((spec) => ({ ...spec, block: id })))
+        i += 1
+        continue
+      }
+    }
 
     if (FENCE.test(raw)) {
       const lang = trimmed.slice(3).trim()
@@ -57,13 +107,13 @@ function parseLines(source: string): LineSpec[] {
         i += 1
       }
       if (i < lines.length) i += 1
-      out.push({ kind: 'code', text: body.join('\n'), lang })
+      out.push({ kind: 'code', text: body.join('\n'), lang, block })
       continue
     }
 
     if (trimmed.startsWith('$$')) {
       if (trimmed.length > 4 && trimmed.endsWith('$$')) {
-        out.push({ kind: 'math', text: trimmed.slice(2, -2).trim() })
+        out.push({ kind: 'math', text: trimmed.slice(2, -2).trim(), block })
         i += 1
         continue
       }
@@ -81,20 +131,20 @@ function parseLines(source: string): LineSpec[] {
           body.push(line)
           i += 1
         }
-        out.push({ kind: 'math', text: body.join('\n').trim() })
+        out.push({ kind: 'math', text: body.join('\n').trim(), block })
         continue
       }
     }
 
     const heading = HEADING.exec(raw)
     if (heading) {
-      out.push({ kind: 'heading', level: heading[1].length, text: heading[2] })
+      out.push({ kind: 'heading', level: heading[1].length, text: heading[2], block })
       i += 1
       continue
     }
 
     if (RULE.test(raw)) {
-      out.push({ kind: 'rule', text: '' })
+      out.push({ kind: 'rule', text: '', block })
       i += 1
       continue
     }
@@ -104,7 +154,8 @@ function parseLines(source: string): LineSpec[] {
       out.push({
         kind: 'task',
         text: task[2],
-        checked: task[1].toLowerCase() === 'x'
+        checked: task[1].toLowerCase() === 'x',
+        block
       })
       i += 1
       continue
@@ -112,26 +163,26 @@ function parseLines(source: string): LineSpec[] {
 
     const bullet = BULLET.exec(raw)
     if (bullet) {
-      out.push({ kind: 'bullet', text: bullet[1] })
+      out.push({ kind: 'bullet', text: bullet[1], block })
       i += 1
       continue
     }
 
     const ordered = ORDERED.exec(raw)
     if (ordered) {
-      out.push({ kind: 'ordered', text: ordered[1] })
+      out.push({ kind: 'ordered', text: ordered[1], block })
       i += 1
       continue
     }
 
     const quote = QUOTE.exec(raw)
     if (quote) {
-      out.push({ kind: 'quote', text: quote[1] })
+      out.push({ kind: 'quote', text: quote[1], block })
       i += 1
       continue
     }
 
-    out.push({ kind: 'paragraph', text: raw })
+    out.push({ kind: 'paragraph', text: raw, block })
     i += 1
   }
 
@@ -170,7 +221,8 @@ function inlineHtml(text: string, images?: ImageControls): string {
 }
 
 function renderLine(spec: LineSpec, index: number, options: RenderOptions): string {
-  const base = `class="nl nl--${spec.kind}" data-line="${index}" data-kind="${spec.kind}"`
+  const block = spec.block ? ` data-block="${escapeAttr(spec.block)}"` : ''
+  const base = `class="nl nl--${spec.kind}" data-line="${index}" data-kind="${spec.kind}"${block}`
   const empty = spec.kind === 'paragraph' && spec.text.trim() === ''
   const placeholder =
     index === 0 && options.placeholder && empty
@@ -180,7 +232,7 @@ function renderLine(spec: LineSpec, index: number, options: RenderOptions): stri
   switch (spec.kind) {
     case 'heading': {
       const level = Math.max(1, Math.min(6, spec.level ?? 1))
-      return `<div class="nl nl--heading nl--h${level}" data-line="${index}" data-kind="heading" data-level="${level}">${inlineHtml(
+      return `<div class="nl nl--heading nl--h${level}" data-line="${index}" data-kind="heading" data-level="${level}"${block}>${inlineHtml(
         spec.text,
         options.images
       )}</div>`
@@ -411,9 +463,10 @@ function setLineKind(el: HTMLElement, kind: LineKind, level = 1): void {
   else el.removeAttribute('contenteditable')
 }
 
-function makeLine(kind: LineKind, level = 1): HTMLElement {
+function makeLine(kind: LineKind, level = 1, block?: string): HTMLElement {
   const el = document.createElement('div')
   setLineKind(el, kind, level)
+  if (block) el.dataset.block = block
   return el
 }
 
@@ -459,6 +512,52 @@ function refreshLineMeta(root: HTMLElement, placeholder?: string): void {
       delete line.dataset.empty
     }
   })
+  decorateBlocks(root)
+}
+
+/** Grip glyph injected into the first row of every explicit block. */
+const GRIP_SVG =
+  '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+  '<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/>' +
+  '<circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/>' +
+  '<circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>'
+
+/**
+ * Paint explicit block runs: first/last rounded edges, and a drag handle on
+ * the first row. Blocks are contiguous rows sharing `data-block`.
+ */
+function decorateBlocks(root: HTMLElement): void {
+  const lines = getLines(root)
+  lines.forEach((line) => {
+    line.classList.remove('nl--block-first', 'nl--block-last', 'ne-block-hover')
+    line.querySelector(':scope > .ne-block__grip')?.remove()
+  })
+  let index = 0
+  while (index < lines.length) {
+    const id = lines[index].dataset.block
+    if (!id) {
+      index += 1
+      continue
+    }
+    let end = index
+    while (end + 1 < lines.length && lines[end + 1].dataset.block === id) end += 1
+    const first = lines[index]
+    const last = lines[end]
+    first.classList.add('nl--block-first')
+    if (root.dataset.hoverBlock === id) first.classList.add('ne-block-hover')
+    last.classList.add('nl--block-last')
+    const grip = document.createElement('span')
+    grip.className = 'ne-block__grip'
+    grip.setAttribute('contenteditable', 'false')
+    grip.setAttribute('draggable', 'true')
+    grip.setAttribute('role', 'button')
+    grip.setAttribute('tabindex', '-1')
+    grip.setAttribute('title', 'Drag to move block · Alt+↑/↓')
+    grip.setAttribute('aria-label', 'Move block')
+    grip.innerHTML = GRIP_SVG
+    first.insertBefore(grip, first.firstChild)
+    index = end + 1
+  }
 }
 
 function serializeLine(line: HTMLElement): string {
@@ -496,13 +595,19 @@ function serializeLine(line: HTMLElement): string {
   }
 }
 
+interface SerializedLine {
+  markdown: string
+  block?: string
+}
+
 function serializeEditor(root: HTMLElement): string {
   const lines = getLines(root)
-  const out: string[] = []
+  const entries: SerializedLine[] = []
   let i = 0
   while (i < lines.length) {
+    const block = lines[i].dataset.block
     if (lineKindOf(lines[i]) !== 'code') {
-      out.push(serializeLine(lines[i]))
+      entries.push({ markdown: serializeLine(lines[i]), block })
       i += 1
       continue
     }
@@ -512,13 +617,39 @@ function serializeEditor(root: HTMLElement): string {
     while (
       i < lines.length &&
       lineKindOf(lines[i]) === 'code' &&
-      (lines[i].dataset.lang ?? '') === lang
+      (lines[i].dataset.lang ?? '') === lang &&
+      lines[i].dataset.block === block
     ) {
       body.push(lineTextOf(lines[i]))
       i += 1
     }
-    out.push(`\`\`\`${lang}\n${body.join('\n')}\n\`\`\``)
+    entries.push({ markdown: `\`\`\`${lang}\n${body.join('\n')}\n\`\`\``, block })
   }
+
+  // Wrap each contiguous explicit block in braces. Single structural rows use
+  // the compact form (`{ - [ ] task }`); everything else stays multi-line.
+  const out: string[] = []
+  let runBlock: string | undefined
+  let run: string[] = []
+  const flush = (): void => {
+    if (runBlock === undefined) {
+      out.push(...run)
+    } else {
+      const compact = run.length === 1 ? compactBlockLine(run[0]) : null
+      if (compact !== null) out.push(compact)
+      else out.push('{', ...run, '}')
+    }
+    run = []
+    runBlock = undefined
+  }
+  for (const entry of entries) {
+    if (entry.block !== runBlock) {
+      flush()
+      runBlock = entry.block
+    }
+    run.push(entry.markdown)
+  }
+  flush()
   return out.join('\n')
 }
 
@@ -548,7 +679,7 @@ function normalizeLineStructure(root: HTMLElement): void {
     })
     let anchor: HTMLElement = line
     for (const block of nested) {
-      const extra = makeLine('paragraph')
+      const extra = makeLine('paragraph', 1, line.dataset.block)
       while (block.firstChild) extra.appendChild(block.firstChild)
       block.remove()
       anchor.after(extra)
@@ -594,6 +725,13 @@ function NoteEditor({
   const [slashSel, setSlashSel] = useState(0)
   const composingRef = useRef(false)
   const initializedRef = useRef(false)
+  // Rows being dragged by their block grip, plus the caret to restore.
+  const dragBlockRef = useRef<{
+    id: string
+    lines: HTMLElement[]
+    caret: { line: HTMLElement; offset: number } | null
+  } | null>(null)
+  const gripPressedRef = useRef<HTMLElement | null>(null)
 
   const imagesRef = useRef(images)
   const placeholderRef = useRef(placeholder)
@@ -869,7 +1007,7 @@ function NoteEditor({
 
       if (caret === text.length && /^(?:-{3,}|\*{3,}|_{3,})$/.test(text)) {
         toRule(line)
-        const next = makeLine('paragraph')
+        const next = makeLine('paragraph', 1, line.dataset.block)
         line.after(next)
         setCaretOffset(next, 0)
         return true
@@ -968,7 +1106,7 @@ function NoteEditor({
         setLineKind(line, 'quote')
         break
       case 'divider': {
-        const next = makeLine('paragraph')
+        const next = makeLine('paragraph', 1, line.dataset.block)
         line.after(next)
         toRule(line)
         placeCaret(next, 'start')
@@ -982,7 +1120,7 @@ function NoteEditor({
       }
       case 'mathblock': {
         toMath(line, lineTextOf(line).trim() || 'x')
-        const next = makeLine('paragraph')
+        const next = makeLine('paragraph', 1, line.dataset.block)
         line.after(next)
         placeCaret(next, 'start')
         break
@@ -1030,7 +1168,7 @@ function NoteEditor({
   }
 
   const createParagraphAfter = (line: HTMLElement): HTMLElement => {
-    const next = makeLine('paragraph')
+    const next = makeLine('paragraph', 1, line.dataset.block)
     line.after(next)
     placeCaret(next, 'start')
     return next
@@ -1063,7 +1201,7 @@ function NoteEditor({
     const fragment = post.extractContents()
 
     const nextKind: LineKind = kind === 'heading' ? 'paragraph' : kind
-    const next = makeLine(nextKind)
+    const next = makeLine(nextKind, 1, line.dataset.block)
     next.appendChild(fragment)
     line.after(next)
     placeCaret(next, 'start')
@@ -1276,6 +1414,268 @@ function NoteEditor({
     commit(true)
   }
 
+  /** Delete a live selection before a structural Enter, returning its caret row. */
+  const deleteSelectionForSplit = (line: HTMLElement | null): HTMLElement | null => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return line
+    const range = sel.getRangeAt(0)
+    const startLine = lineFromNode(range.startContainer)
+    const endLine = lineFromNode(range.endContainer)
+    if (startLine && endLine && startLine !== endLine) {
+      if (!deleteMultiLineSelection()) range.deleteContents()
+    } else {
+      range.deleteContents()
+    }
+    return currentLine() ?? line
+  }
+
+  /** Contiguous ungrouped rows around `line`; blank rows and blocks break it. */
+  const looseRun = (line: HTMLElement): HTMLElement[] => {
+    const all = getLines(rootRef.current as HTMLElement)
+    const at = all.indexOf(line)
+    if (at < 0) return [line]
+    let start = at
+    let end = at
+    while (start > 0) {
+      const prev = all[start - 1]
+      if (prev.dataset.block || lineTextOf(prev).trim() === '') break
+      start -= 1
+    }
+    while (end + 1 < all.length) {
+      const next = all[end + 1]
+      if (next.dataset.block || lineTextOf(next).trim() === '') break
+      end += 1
+    }
+    return all.slice(start, end + 1)
+  }
+
+  /**
+   * Shift+Enter: split the current block (or loose run) into two explicit
+   * blocks at the caret, so each block stays a container of several lines.
+   */
+  const splitBlockAtCaret = (line: HTMLElement | null): void => {
+    const root = rootRef.current
+    if (!root) return
+    if (!line) {
+      const last = getLines(root).at(-1)
+      const next = makeLine('paragraph', 1, nextBlockId())
+      if (last) last.after(next)
+      else root.appendChild(next)
+      placeCaret(next, 'start')
+      commit(true)
+      return
+    }
+
+    const kind = lineKindOf(line)
+    const existing = line.dataset.block
+    const group = existing
+      ? getLines(root).filter((el) => el.dataset.block === existing)
+      : looseRun(line)
+    const blockId = existing ?? nextBlockId()
+    for (const el of group) el.dataset.block = blockId
+
+    const host = textHost(line)
+    let next: HTMLElement
+    if (isAtomic(line) || kind === 'code') {
+      next = makeLine('paragraph', 1, nextBlockId())
+      line.after(next)
+    } else {
+      const fragment = document.createDocumentFragment()
+      const range = selectionInHost(host)
+      if (range) {
+        const post = document.createRange()
+        post.selectNodeContents(host)
+        post.setStart(range.startContainer, range.startOffset)
+        fragment.appendChild(post.extractContents())
+        // A task row's checkbox is structural, not text; never duplicate it.
+        fragment
+          .querySelectorAll('input[type="checkbox"]')
+          .forEach((input) => input.remove())
+      }
+      const nextKind: LineKind = kind === 'heading' ? 'paragraph' : kind
+      next = makeLine(nextKind, 1, nextBlockId())
+      next.appendChild(fragment)
+      line.after(next)
+    }
+
+    const newId = next.dataset.block as string
+    const at = group.indexOf(line)
+    for (const el of group.slice(at + 1)) el.dataset.block = newId
+    refreshLineMeta(root, placeholderRef.current)
+    placeCaret(next, 'start')
+    commit(true)
+  }
+
+  /** Move block rows as one unit before `anchor` (null appends). */
+  const moveRows = (rows: HTMLElement[], anchor: Node | null): void => {
+    const root = rootRef.current
+    if (!root) return
+    const ref = anchor && root.contains(anchor) ? anchor : null
+    for (const row of rows) root.insertBefore(row, ref)
+  }
+
+  /** Alt+Arrow: move the block under the caret over its neighbour. */
+  const moveBlockByKeyboard = (line: HTMLElement, dir: 'up' | 'down'): void => {
+    const root = rootRef.current
+    const id = line.dataset.block
+    if (!root || !id) return
+    const all = getLines(root)
+    const rows = all.filter((el) => el.dataset.block === id)
+    if (rows.length === 0) return
+    const first = all.indexOf(rows[0])
+    const last = all.indexOf(rows[rows.length - 1])
+    let anchor: Node | null = null
+    if (dir === 'up') {
+      if (first === 0) return
+      const prev = all[first - 1]
+      const prevId = prev.dataset.block
+      if (prevId) {
+        let at = first - 1
+        while (at > 0 && all[at - 1].dataset.block === prevId) at -= 1
+        anchor = all[at]
+      } else {
+        anchor = prev
+      }
+    } else {
+      if (last === all.length - 1) return
+      const next = all[last + 1]
+      const nextId = next.dataset.block
+      if (nextId) {
+        let at = last + 1
+        while (at < all.length - 1 && all[at + 1].dataset.block === nextId) at += 1
+        anchor = all[at].nextSibling
+      } else {
+        anchor = next.nextSibling
+      }
+    }
+    const caret = { line, offset: caretOffset(textHost(line)) }
+    moveRows(rows, anchor)
+    refreshLineMeta(root, placeholderRef.current)
+    placeCaret(caret.line, caret.offset)
+    commit(true)
+  }
+
+  const clearBlockDropMarks = (root: HTMLElement): void => {
+    root.querySelectorAll<HTMLElement>('.nl--drop-before, .nl--drop-after').forEach((el) => {
+      el.classList.remove('nl--drop-before', 'nl--drop-after')
+    })
+  }
+
+  const endBlockDrag = (): void => {
+    const root = rootRef.current
+    if (root) {
+      clearBlockDropMarks(root)
+      root
+        .querySelectorAll<HTMLElement>('.nl--dragging')
+        .forEach((el) => el.classList.remove('nl--dragging'))
+    }
+    dragBlockRef.current = null
+    gripPressedRef.current = null
+  }
+
+  const onBlockMouseDown = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const target = event.target
+    gripPressedRef.current =
+      target instanceof Element ? target.closest<HTMLElement>('.ne-block__grip') : null
+  }
+
+  const onBlockDragStart = (event: React.DragEvent<HTMLDivElement>): void => {
+    const target = event.target
+    const grip = target instanceof Element ? target.closest('.ne-block__grip') : null
+    const root = rootRef.current
+    const line = grip?.closest<HTMLElement>('.nl') ?? gripPressedRef.current
+    gripPressedRef.current = null
+    const id = line?.dataset.block
+    if (!root || !line || !id) return
+    const rows = getLines(root).filter((el) => el.dataset.block === id)
+    if (rows.length === 0) return
+    const active = currentLine()
+    const caret =
+      active && rows.includes(active)
+        ? { line: active, offset: caretOffset(textHost(active)) }
+        : null
+    dragBlockRef.current = { id, lines: rows, caret }
+    rows.forEach((el) => el.classList.add('nl--dragging'))
+    event.stopPropagation()
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(BLOCK_MIME, id)
+    event.dataTransfer.setDragImage(rows[0], 16, 12)
+  }
+
+  const onBlockDragOver = (event: React.DragEvent<HTMLDivElement>): void => {
+    const drag = dragBlockRef.current
+    const root = rootRef.current
+    if (!drag || !root) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    clearBlockDropMarks(root)
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.nl') : null
+    if (!target || !root.contains(target) || target.dataset.block === drag.id) return
+    const rect = target.getBoundingClientRect()
+    const before = event.clientY < rect.top + rect.height / 2
+    target.classList.add(before ? 'nl--drop-before' : 'nl--drop-after')
+  }
+
+  const onBlockDrop = (event: React.DragEvent<HTMLDivElement>): void => {
+    const drag = dragBlockRef.current
+    const root = rootRef.current
+    if (!drag || !root) return
+    event.preventDefault()
+    event.stopPropagation()
+    clearBlockDropMarks(root)
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.nl') : null
+    if (!target || !root.contains(target) || target.dataset.block === drag.id) {
+      endBlockDrag()
+      return
+    }
+    const rect = target.getBoundingClientRect()
+    const before = event.clientY < rect.top + rect.height / 2
+    const targetId = target.dataset.block
+    let edge = target
+    if (targetId) {
+      const rows = getLines(root).filter((el) => el.dataset.block === targetId)
+      edge = before ? rows[0] : rows[rows.length - 1]
+    }
+    const anchor = before ? edge : edge.nextSibling
+    if (anchor && drag.lines.includes(anchor as HTMLElement)) {
+      endBlockDrag()
+      return
+    }
+    const caret = drag.caret
+    moveRows(drag.lines, anchor)
+    refreshLineMeta(root, placeholderRef.current)
+    if (caret) placeCaret(caret.line, caret.offset)
+    endBlockDrag()
+    commit(true)
+  }
+
+  const setHoveredBlock = (target: EventTarget | null): void => {
+    const root = rootRef.current
+    if (!root || !(target instanceof Element)) return
+    const line = target.closest<HTMLElement>('.nl')
+    if (!line || !root.contains(line)) return
+    const id = line.dataset.block ?? ''
+    if ((root.dataset.hoverBlock ?? '') === id) return
+    if (id) root.dataset.hoverBlock = id
+    else delete root.dataset.hoverBlock
+    getLines(root).forEach((el) => {
+      el.classList.toggle(
+        'ne-block-hover',
+        !!id && el.dataset.block === id && el.classList.contains('nl--block-first')
+      )
+    })
+  }
+
+  const clearHoveredBlock = (): void => {
+    const root = rootRef.current
+    if (!root || !root.dataset.hoverBlock) return
+    delete root.dataset.hoverBlock
+    root
+      .querySelectorAll<HTMLElement>('.ne-block-hover')
+      .forEach((el) => el.classList.remove('ne-block-hover'))
+  }
+
   const refreshSlash = (): void => {
     const line = currentLine()
     if (!line || isAtomic(line)) {
@@ -1383,6 +1783,16 @@ function NoteEditor({
       }
     }
 
+    // Shift+Enter creates a block boundary instead of another line: the caret
+    // position splits the current block into two independently movable blocks.
+    if (key === 'Enter' && event.shiftKey) {
+      event.preventDefault()
+      if (composingRef.current) return
+      const target = deleteSelectionForSplit(line)
+      splitBlockAtCaret(target)
+      return
+    }
+
     if (key === 'Enter') {
       event.preventDefault()
       if (composingRef.current) return
@@ -1416,7 +1826,7 @@ function NoteEditor({
           const text = host.textContent ?? ''
           const at = caretOffset(host)
           host.textContent = text.slice(0, at)
-          const next = makeLine('code')
+          const next = makeLine('code', 1, line.dataset.block)
           next.dataset.lang = line.dataset.lang ?? ''
           const nextHost = textHost(next)
           nextHost.textContent = text.slice(at)
@@ -1498,6 +1908,13 @@ function NoteEditor({
       event.preventDefault()
       insertTextAtCaret('  ')
       commit(true)
+      return
+    }
+
+    // Alt+Arrow reorders the explicit block under the caret.
+    if (event.altKey && (key === 'ArrowUp' || key === 'ArrowDown') && line) {
+      event.preventDefault()
+      moveBlockByKeyboard(line, key === 'ArrowUp' ? 'up' : 'down')
       return
     }
 
@@ -1596,7 +2013,7 @@ function NoteEditor({
     insertTextAtCaret(parts[0] ?? '')
     let anchor = line
     for (let i = 1; i < parts.length; i++) {
-      const next = makeLine('paragraph')
+      const next = makeLine('paragraph', 1, line.dataset.block)
       if (parts[i]) next.textContent = parts[i]
       anchor.after(next)
       anchor = next
@@ -1702,7 +2119,17 @@ function NoteEditor({
         onBeforeInput={handleBeforeInput}
         onKeyDown={handleKeyDown}
         onKeyUp={refreshSlash}
-        onMouseUp={refreshSlash}
+        onMouseUp={() => {
+          gripPressedRef.current = null
+          refreshSlash()
+        }}
+        onMouseDown={onBlockMouseDown}
+        onMouseOver={(event) => setHoveredBlock(event.target)}
+        onMouseLeave={clearHoveredBlock}
+        onDragStart={onBlockDragStart}
+        onDragOver={onBlockDragOver}
+        onDrop={onBlockDrop}
+        onDragEnd={endBlockDrag}
         onClick={(event) => {
           const target = event.target
           if (target instanceof HTMLInputElement && target.type === 'checkbox') {
