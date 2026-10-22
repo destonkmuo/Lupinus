@@ -146,7 +146,6 @@ export interface TaskDraft {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
-const DATETIME_RE = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -161,13 +160,14 @@ function asDate(value: unknown): string | null {
 }
 
 function asTime(value: unknown): string | null {
-  return typeof value === 'string' && TIME_RE.test(value) ? value : null
+  return typeof value === 'string' ? normalizeTimeInput(value) : null
 }
 
 /**
  * Coerce loose time input to `HH:MM`, or null when it carries no usable time.
- * An hour-only value (`"14"`) means top of the hour — this is what used to
- * leak through as `"2: undefined PM"`.
+ * Legacy stores wrote hour-only values (`"14"`, `"8"`) and `H:MM`; both used
+ * to round-trip as `"2: undefined PM"` or vanish on reload. Accept them and
+ * pad to the canonical five-character form.
  */
 export function normalizeTimeInput(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null
@@ -175,6 +175,14 @@ export function normalizeTimeInput(value: string | null | undefined): string | n
   if (TIME_RE.test(trimmed)) return trimmed
   const hourOnly = /^([01]?\d|2[0-3])$/.exec(trimmed)
   if (hourOnly) return `${hourOnly[1].padStart(2, '0')}:00`
+  const loose = /^(\d{1,2}):(\d{2})$/.exec(trimmed)
+  if (loose) {
+    const hour = Number(loose[1])
+    const minute = Number(loose[2])
+    if (hour <= 23 && minute <= 59) {
+      return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+    }
+  }
   return null
 }
 
@@ -189,9 +197,16 @@ function asId(value: unknown): string | null {
 function asEventDateTime(value: unknown): EventDateTime | null {
   if (!isRecord(value)) return null
   if (typeof value.dateTime === 'string') {
-    const match = DATETIME_RE.exec(value.dateTime)
-    if (!match) return null
-    return { dateTime: `${match[1]}T${match[2]}` }
+    const match = /^(\d{4}-\d{2}-\d{2})T(.+)$/.exec(value.dateTime)
+    if (match) {
+      // Accept seconds/offsets as well as older hour-only values (`T08`).
+      const timePart = /^(\d{1,2}):(\d{2})/.exec(match[2])
+      const time = normalizeTimeInput(timePart ? `${timePart[1]}:${timePart[2]}` : match[2])
+      // An unparseable time must not erase the date (or the whole event).
+      return time ? { dateTime: `${match[1]}T${time}` } : { date: match[1] }
+    }
+    const date = asDate(value.dateTime)
+    return date ? { date } : null
   }
   const date = asDate(value.date)
   return date ? { date } : null

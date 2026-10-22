@@ -9,6 +9,7 @@ import {
   MicMutedIcon,
   SettingsIcon,
   SwitchUserIcon,
+  TrashIcon,
   UserIcon
 } from './icons'
 
@@ -42,6 +43,7 @@ function Rail(): React.JSX.Element {
   const requestLock = useAppStore((state) => state.requestLock)
   const bookmarks = useAppStore((state) => state.bookmarks)
   const toggleBookmark = useAppStore((state) => state.toggleBookmark)
+  const setTrashOpen = useAppStore((state) => state.setTrashOpen)
 
   const [hovered, setHovered] = useState(false)
   const [menu, setMenu] = useState<'profile' | null>(null)
@@ -209,6 +211,19 @@ function Rail(): React.JSX.Element {
         <div className="rail__spacer" />
 
         <div className="rail__group">
+          <button
+            type="button"
+            className="rail__btn"
+            title="Trash"
+            aria-label="Trash"
+            onClick={() => {
+              setMenu(null)
+              setNavMenu(null)
+              setTrashOpen(true)
+            }}
+          >
+            <TrashIcon size={18} />
+          </button>
           <button
             type="button"
             className={`rail__btn${backgroundListening ? '' : ' is-muted'}`}

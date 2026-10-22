@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { isInlineNav, NAV_BY_KEY } from '../nav'
+import { isInlineNav, NAV_BY_KEY, sidebarViewFor, type SidebarView } from '../nav'
 import { markSpaceSwipe } from '../gestures'
 import {
   buildNoteGraph,
@@ -11,10 +11,17 @@ import {
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import { addHiddenPage, joinHidden, splitHidden } from '../subpages'
 import { importDroppedPicture } from '../images'
+import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 import {
   LOCAL_CALENDAR_ID,
+  addMonths,
   expandItemDates,
+  isTaskDone,
   itemStartTime,
+  monthGrid,
+  monthLabel,
+  parseISODate,
+  toISODate,
   todayISO,
   type CalendarItem
 } from '../planner'
@@ -30,20 +37,30 @@ import {
   type NavKey,
   type Note,
   type NoteDivider,
-  type NoteSection
+  type NoteSection,
+  type TaskFilter
 } from '../store/appStore'
 import {
+  AlarmIcon,
   CalendarIcon,
   CardsIcon,
   ChatIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   ExclamationIcon,
   FileTextIcon,
+  GraphIcon,
+  MailIcon,
   MindmapIcon,
   PlusIcon,
   QuizIcon,
   RestoreIcon,
   SearchIcon,
+  SettingsIcon,
+  SidebarToggleIcon,
+  StopwatchIcon,
+  TimerIcon,
   BookmarkIcon,
   TrashIcon,
   XIcon
@@ -65,11 +82,9 @@ function stripChildLinks(content: string, childTitle: string): string {
   return parts.join('')
 }
 
-// macOS floats the traffic lights over the sidebar, so the search sits below a
-// slim status band reserved for them. Elsewhere the frame is native and the
-// band would only waste vertical space, so the status bubble rides in the
-// search row and everything shifts up.
-const IS_MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+// macOS floats the traffic lights over the sidebar, so the chrome band starts
+// to their right. Elsewhere the frame is native and the band starts at the
+// sidebar's left edge.
 
 /** "9:00 AM" from an event start (all-day events have no time part). */
 function formatEventTime(item: CalendarItem): string {
@@ -289,6 +304,435 @@ function TodaySection(): React.JSX.Element {
   )
 }
 
+/** Shared section heading for the contextual sidebar bodies. */
+function ContextHead({
+  title,
+  action
+}: {
+  title: string
+  action?: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="sidebar-context__head">
+      <span className="sidebar-context__title">{title}</span>
+      {action}
+    </div>
+  )
+}
+
+/** Compact month grid plus the local/subscribed calendar list. */
+function CalendarSidebar(): React.JSX.Element {
+  const calendarItems = useAppStore((state) => state.calendarItems)
+  const subscriptions = useAppStore((state) => state.subscriptions)
+  const localCalendarName = useAppStore((state) => state.localCalendarName)
+  const localCalendarColor = useAppStore((state) => state.localCalendarColor)
+  const updateSubscription = useAppStore((state) => state.updateSubscription)
+  const cursor = useAppStore((state) => state.calendarCursor)
+  const setCursor = useAppStore((state) => state.setCalendarCursor)
+  const openDay = useAppStore((state) => state.openDay)
+  const openNav = useAppStore((state) => state.openNav)
+
+  const { year, month } = parseISODate(cursor)
+  const days = monthGrid(year, month)
+  const first = days[0]
+  const last = days[days.length - 1]
+  const today = todayISO()
+
+  const eventDates = new Set<string>()
+  const items: CalendarItem[] = [...calendarItems]
+  for (const sub of subscriptions) {
+    if (sub.enabled) items.push(...sub.events)
+  }
+  for (const item of items) {
+    for (const date of expandItemDates(item, first, last)) eventDates.add(date)
+  }
+
+  const shiftMonth = (delta: number): void => {
+    const next = addMonths(year, month, delta)
+    setCursor(toISODate(next.year, next.month, 1))
+  }
+
+  return (
+    <>
+      <section className="sidebar-context__section" aria-label="Mini calendar">
+        <div className="sidebar-context__month">
+          <button
+            type="button"
+            className="sidebar__icon-btn"
+            aria-label="Previous month"
+            title="Previous month"
+            onClick={() => shiftMonth(-1)}
+          >
+            <ChevronLeftIcon size={15} />
+          </button>
+          <button
+            type="button"
+            className="sidebar-context__month-label"
+            title="Open calendar"
+            onClick={() => openNav('calendar')}
+          >
+            {monthLabel(year, month)}
+          </button>
+          <button
+            type="button"
+            className="sidebar__icon-btn"
+            aria-label="Next month"
+            title="Next month"
+            onClick={() => shiftMonth(1)}
+          >
+            <ChevronRightIcon size={15} />
+          </button>
+        </div>
+        <div className="sidebar-context__weekdays" aria-hidden="true">
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+            <span key={`${day}-${index}`}>{day}</span>
+          ))}
+        </div>
+        <div className="sidebar-context__month-grid">
+          {days.map((date) => {
+            const { month: cellMonth, day } = parseISODate(date)
+            const outside = cellMonth !== month
+            return (
+              <button
+                key={date}
+                type="button"
+                className={`sidebar-context__day${outside ? ' is-outside' : ''}${date === today ? ' is-today' : ''}${date === cursor ? ' is-selected' : ''}`}
+                aria-label={date}
+                aria-pressed={date === cursor}
+                onClick={() => openDay(date)}
+              >
+                <span>{day}</span>
+                {eventDates.has(date) && <span className="sidebar-context__day-dot" />}
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      <section className="sidebar-context__section" aria-label="Calendars">
+        <ContextHead
+          title="Calendars"
+          action={
+            <button
+              type="button"
+              className="sidebar__icon-btn"
+              aria-label="Open calendar"
+              title="Open calendar"
+              onClick={() => openNav('calendar')}
+            >
+              <PlusIcon size={17} />
+            </button>
+          }
+        />
+        <ul className="sidebar-context__list">
+          <li className="sidebar-context__cal">
+            <span
+              className="sidebar-context__dot"
+              style={{ background: localCalendarColor }}
+              aria-hidden="true"
+            />
+            <span className="sidebar-context__label">{localCalendarName}</span>
+            <span className="sidebar-context__meta">Local</span>
+          </li>
+          {subscriptions.map((sub) => (
+            <li key={sub.id} className="sidebar-context__cal">
+              <span
+                className="sidebar-context__dot"
+                style={{ background: sub.color }}
+                aria-hidden="true"
+              />
+              <span className="sidebar-context__label" title={sub.name}>
+                {sub.name}
+              </span>
+              <input
+                type="checkbox"
+                className="sidebar-context__check"
+                checked={sub.enabled}
+                aria-label={`${sub.enabled ? 'Hide' : 'Show'} ${sub.name}`}
+                onChange={() => updateSubscription(sub.id, { enabled: !sub.enabled })}
+              />
+            </li>
+          ))}
+        </ul>
+      </section>
+    </>
+  )
+}
+
+/** Task filters that drive the Tasks page, plus the routine lists. */
+function TasksSidebar(): React.JSX.Element {
+  const tasks = useAppStore((state) => state.tasks)
+  const routines = useAppStore((state) => state.routines)
+  const taskFilter = useAppStore((state) => state.taskFilter)
+  const setTaskFilter = useAppStore((state) => state.setTaskFilter)
+  const openNav = useAppStore((state) => state.openNav)
+  const today = todayISO()
+
+  const open = tasks.filter((task) => !isTaskDone(task))
+  const filters: { id: TaskFilter; label: string; count: number }[] = [
+    { id: 'all', label: 'All tasks', count: open.length },
+    { id: 'today', label: 'Today', count: open.filter((task) => task.due === today).length },
+    {
+      id: 'overdue',
+      label: 'Overdue',
+      count: open.filter((task) => task.due !== null && task.due < today).length
+    },
+    {
+      id: 'completed',
+      label: 'Completed',
+      count: tasks.filter((task) => isTaskDone(task)).length
+    }
+  ]
+
+  const choose = (filter: TaskFilter): void => {
+    setTaskFilter(filter)
+    openNav('tasks')
+  }
+
+  return (
+    <>
+      <section className="sidebar-context__section" aria-label="Task filters">
+        <ContextHead title="Filters" />
+        <ul className="sidebar-context__list">
+          {filters.map((filter) => (
+            <li key={filter.id}>
+              <button
+                type="button"
+                className={`sidebar-context__row${taskFilter === filter.id ? ' is-active' : ''}`}
+                aria-pressed={taskFilter === filter.id}
+                onClick={() => choose(filter.id)}
+              >
+                <span className="sidebar-context__label">{filter.label}</span>
+                <span className="sidebar-context__count">{filter.count}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="sidebar-context__section" aria-label="Task lists">
+        <ContextHead
+          title="Lists"
+          action={
+            <button
+              type="button"
+              className="sidebar__icon-btn"
+              aria-label="Open tasks"
+              title="Open tasks"
+              onClick={() => openNav('tasks')}
+            >
+              <PlusIcon size={17} />
+            </button>
+          }
+        />
+        {routines.length === 0 ? (
+          <p className="sidebar__empty">No routines yet.</p>
+        ) : (
+          <ul className="sidebar-context__list">
+            {routines.map((routine) => {
+              const done = routine.steps.filter((step) => step.done).length
+              return (
+                <li key={routine.id}>
+                  <button
+                    type="button"
+                    className="sidebar-context__row"
+                    onClick={() => choose('all')}
+                  >
+                    <span className="sidebar-context__label" title={routine.title}>
+                      {routine.title.trim() || 'Untitled routine'}
+                    </span>
+                    <span className="sidebar-context__count">
+                      {routine.steps.length === 0 ? '—' : `${done}/${routine.steps.length}`}
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
+    </>
+  )
+}
+
+function GraphSidebar(): React.JSX.Element {
+  const spaces = useAppStore((state) => state.spaces)
+  const notes = useAppStore((state) => state.notes)
+  const activeSpaceId = useAppStore((state) => state.activeSpaceId)
+  const setActiveSpace = useAppStore((state) => state.setActiveSpace)
+  const openNav = useAppStore((state) => state.openNav)
+
+  return (
+    <section className="sidebar-context__section" aria-label="Graph spaces">
+      <ContextHead
+        title="Spaces"
+        action={
+          <button
+            type="button"
+            className="sidebar__icon-btn"
+            aria-label="Open graph"
+            title="Open graph"
+            onClick={() => openNav('graph')}
+          >
+            <GraphIcon size={16} />
+          </button>
+        }
+      />
+      <ul className="sidebar-context__list">
+        {spaces.map((space) => {
+          const count = notes.filter(
+            (note) => !note.deletedAt && (note.spaceId ?? spaces[0]?.id) === space.id
+          ).length
+          return (
+            <li key={space.id}>
+              <button
+                type="button"
+                className={`sidebar-context__row${space.id === activeSpaceId ? ' is-active' : ''}`}
+                onClick={() => {
+                  setActiveSpace(space.id)
+                  openNav('graph')
+                }}
+              >
+                <span className="sidebar-context__glyph" aria-hidden="true">
+                  {space.emoji.trim() || '•'}
+                </span>
+                <span className="sidebar-context__label">{space.name}</span>
+                <span className="sidebar-context__count">{count}</span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+function ChatSidebar(): React.JSX.Element {
+  const messages = useAppStore((state) => state.messages)
+  const clearChat = useAppStore((state) => state.clearChat)
+  const openNav = useAppStore((state) => state.openNav)
+  const recent = messages.slice(-6).reverse()
+
+  return (
+    <section className="sidebar-context__section" aria-label="Recent chat">
+      <ContextHead
+        title="Recent"
+        action={
+          messages.length > 0 ? (
+            <button type="button" className="sidebar-context__text-btn" onClick={clearChat}>
+              Clear
+            </button>
+          ) : undefined
+        }
+      />
+      {recent.length === 0 ? (
+        <div className="sidebar-context__empty">
+          <ChatIcon size={24} />
+          <p>No messages yet.</p>
+          <button type="button" className="sidebar-context__cta" onClick={() => openNav('agent')}>
+            Start a chat
+          </button>
+        </div>
+      ) : (
+        <ul className="sidebar-context__list">
+          {recent.map((message) => (
+            <li key={message.id}>
+              <button
+                type="button"
+                className="sidebar-context__row sidebar-context__row--stacked"
+                onClick={() => openNav('agent')}
+              >
+                <span className="sidebar-context__meta">
+                  {message.role === 'user' ? 'You' : 'SeeMO'}
+                </span>
+                <span className="sidebar-context__label">{message.text.trim() || '…'}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function MiscSidebar(): React.JSX.Element {
+  const alarms = useAppStore((state) => state.alarms)
+  const timers = useAppStore((state) => state.timers)
+  const stopwatches = useAppStore((state) => state.stopwatches)
+  const openNav = useAppStore((state) => state.openNav)
+  const rows = [
+    { label: 'Alarms', count: alarms.length, icon: AlarmIcon },
+    { label: 'Timers', count: timers.length, icon: TimerIcon },
+    { label: 'Stopwatches', count: stopwatches.length, icon: StopwatchIcon }
+  ]
+
+  return (
+    <section className="sidebar-context__section" aria-label="Tools">
+      <ContextHead title="Tools" />
+      <ul className="sidebar-context__list">
+        {rows.map((row) => {
+          const Icon = row.icon
+          return (
+            <li key={row.label}>
+              <button
+                type="button"
+                className="sidebar-context__row"
+                onClick={() => openNav('misc')}
+              >
+                <Icon size={15} />
+                <span className="sidebar-context__label">{row.label}</span>
+                <span className="sidebar-context__count">{row.count}</span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+function ContextEmpty({
+  icon,
+  title,
+  body
+}: {
+  icon: React.ReactNode
+  title: string
+  body: string
+}): React.JSX.Element {
+  return (
+    <div className="sidebar-context__empty">
+      {icon}
+      <p className="sidebar-context__empty-title">{title}</p>
+      <p>{body}</p>
+    </div>
+  )
+}
+
+function SidebarContext({ view }: { view: Exclude<SidebarView, 'notes'> }): React.JSX.Element {
+  if (view === 'calendar') return <CalendarSidebar />
+  if (view === 'tasks') return <TasksSidebar />
+  if (view === 'graph') return <GraphSidebar />
+  if (view === 'chat') return <ChatSidebar />
+  if (view === 'misc') return <MiscSidebar />
+  if (view === 'mail') {
+    return (
+      <ContextEmpty
+        icon={<MailIcon size={24} />}
+        title="Mail"
+        body="Your inbox, folders, and filters will live here."
+      />
+    )
+  }
+  return (
+    <ContextEmpty
+      icon={<SettingsIcon size={24} />}
+      title="Settings"
+      body="Open Settings in the main view to adjust the app."
+    />
+  )
+}
+
 function Sidebar(): React.JSX.Element {
   const activeTab = useAppStore(
     (state) => state.tabs.find((t) => t.id === state.activeTabId) ?? null
@@ -296,6 +740,7 @@ function Sidebar(): React.JSX.Element {
   // Nav destinations float above the notes: the sidebar selection tracks
   // which floating window (if any) is open.
   const activeNav = useAppStore((state) => state.activeNav)
+  const sidebarView = sidebarViewFor(activeNav)
   const openNav = useAppStore((state) => state.openNav)
   const notes = useAppStore((state) => state.notes)
   const spaces = useAppStore((state) => state.spaces)
@@ -337,6 +782,13 @@ function Sidebar(): React.JSX.Element {
   const sidebarWidth = useAppStore((state) => state.sidebarWidth)
   const setSidebarWidth = useAppStore((state) => state.setSidebarWidth)
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed)
+  const toggleSidebar = useAppStore((state) => state.toggleSidebar)
+  const goBackTab = useAppStore((state) => state.goBackTab)
+  const goForwardTab = useAppStore((state) => state.goForwardTab)
+  const tabHistory = useAppStore((state) => state.tabHistory)
+  const historyIndex = useAppStore((state) => state.historyIndex)
+  const canGoBack = historyIndex > 0
+  const canGoForward = historyIndex >= 0 && historyIndex < tabHistory.length - 1
 
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null)
@@ -384,7 +836,16 @@ function Sidebar(): React.JSX.Element {
   const [noteIconEmoji, setNoteIconEmoji] = useState('')
   const [spaceDraggingId, setSpaceDraggingId] = useState<string | null>(null)
   const [spaceDropHint, setSpaceDropHint] = useState<{ id: string; before: boolean } | null>(null)
-  const [trashOpen, setTrashOpen] = useState(false)
+  // Trash lives in the rail now; the popover itself stays here (fixed
+  // positioning), so the rail only flips this shared flag.
+  const trashOpen = useAppStore((state) => state.trashOpen)
+  const setTrashOpen = useAppStore((state) => state.setTrashOpen)
+  const sidebarWidgets = useAppStore((state) => state.sidebarWidgets)
+  const sidebarWidgetOrder = useAppStore((state) => state.sidebarWidgetOrder)
+  const widgetOrder = (key: 'today' | 'favorites' | 'notes'): number => {
+    const at = sidebarWidgetOrder.indexOf(key)
+    return at < 0 ? 0 : at
+  }
 
   const openSpaceEditor = (spaceId: string | null): void => {
     setSpaceItemMenu(null)
@@ -470,6 +931,7 @@ function Sidebar(): React.JSX.Element {
       setFavDragging(token)
       event.dataTransfer.effectAllowed = 'move'
       event.dataTransfer.setData('text/plain', token)
+      beginSortableDrag(event, event.currentTarget)
     },
     onDragEnd: () => {
       favDragRef.current = null
@@ -508,6 +970,33 @@ function Sidebar(): React.JSX.Element {
   // until a short gap marks the next gesture.
   const swipeRef = useRef({ accum: 0, fired: false, lastAt: 0 })
   const resizeStartRef = useRef({ x: 0, width: 0 })
+
+  const sortableHints = [
+    ...(dropHint ? [{ id: `note:${dropHint.id}`, before: dropHint.before }] : []),
+    ...(sectionDropHint
+      ? [{ id: `section:${sectionDropHint.id}`, before: sectionDropHint.before }]
+      : []),
+    ...(dividerDropHint
+      ? [{ id: `divider:${dividerDropHint.id}`, before: dividerDropHint.before }]
+      : []),
+    ...(favDropHint ? [{ id: `fav:${favDropHint.token}`, before: favDropHint.before }] : []),
+    ...(spaceDropHint ? [{ id: `space:${spaceDropHint.id}`, before: spaceDropHint.before }] : [])
+  ]
+  useSortableMakeSpace({
+    rootRef: asideRef,
+    activeId: draggingId
+      ? `note:${draggingId}`
+      : sectionDraggingId
+        ? `section:${sectionDraggingId}`
+        : dividerDraggingId
+          ? `divider:${dividerDraggingId}`
+          : favDragging
+            ? `fav:${favDragging}`
+            : spaceDraggingId
+              ? `space:${spaceDraggingId}`
+              : null,
+    hints: sortableHints
+  })
 
   useEffect(() => {
     const container = spaceCarouselRef.current
@@ -560,19 +1049,13 @@ function Sidebar(): React.JSX.Element {
     }
     return views
   }, [spaces, notes, noteOrder, query])
-  // Favorites are global (every space, plus the rail pages), in bookmark order.
-  // Pages come straight from the nav registry; notes resolve against the vault
+  // The rail owns page destinations, so the sidebar strip only surfaces
+  // bookmarked notes (no duplicate icon row). Notes resolve against the vault
   // and drop out when trashed/deleted.
   const favoriteItems = useMemo(
     () =>
       bookmarks.flatMap((bookmark): FavoriteItem[] => {
-        if (bookmark.kind === 'nav') {
-          const nav = NAV_BY_KEY[bookmark.key]
-          if (!nav) return []
-          // Match the rail: the chat page shows the chat bubble, not the agent.
-          const icon = bookmark.key === 'agent' ? ChatIcon : nav.icon
-          return [{ kind: 'nav', key: bookmark.key, label: nav.label, icon }]
-        }
+        if (bookmark.kind === 'nav') return []
         const note = notes.find((n) => n.id === bookmark.id)
         if (!note || note.deletedAt) return []
         return [{ kind: 'note', note }]
@@ -1052,7 +1535,17 @@ function Sidebar(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [menu, navMenu, childMenu, spaceMenu, spaceItemMenu, spaceEditor, trashOpen, dividerMenu])
+  }, [
+    menu,
+    navMenu,
+    childMenu,
+    spaceMenu,
+    spaceItemMenu,
+    spaceEditor,
+    trashOpen,
+    dividerMenu,
+    setTrashOpen
+  ])
 
   // A selected divider can be removed with Backspace/Delete. Ignore the key
   // while typing so inline renames and search keep their normal behavior.
@@ -1182,6 +1675,8 @@ function Sidebar(): React.JSX.Element {
       <li
         key={divider.id}
         data-divider-row={divider.id}
+        data-sortable-item
+        data-sortable-id={`divider:${divider.id}`}
         className={`sidebar__divider-row${dividerDraggingId === divider.id ? ' is-dragging' : ''}${isSelected ? ' is-selected' : ''}${hint ? (hint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
         draggable
         onDragStart={(event) => {
@@ -1189,6 +1684,7 @@ function Sidebar(): React.JSX.Element {
           setDividerDraggingId(divider.id)
           event.dataTransfer.effectAllowed = 'move'
           event.dataTransfer.setData('text/plain', divider.id)
+          beginSortableDrag(event, event.currentTarget)
         }}
         onDragEnd={() => clearDividerDrag()}
         onClick={(event) => {
@@ -1209,6 +1705,8 @@ function Sidebar(): React.JSX.Element {
             event.preventDefault()
             event.stopPropagation()
             event.dataTransfer.dropEffect = 'move'
+            setDropHint(null)
+            setSectionDropHint(null)
             setDividerDropHint({ id: divider.id, before: positionAbove(event) })
           } else if (dragIdRef.current) {
             event.preventDefault()
@@ -1309,6 +1807,11 @@ function Sidebar(): React.JSX.Element {
         dragIdRef.current = note.id
         setDraggingId(note.id)
         event.dataTransfer.effectAllowed = 'move'
+        beginSortableDrag(
+          event,
+          event.currentTarget,
+          event.currentTarget.querySelector<HTMLElement>('.sidebar__row') ?? event.currentTarget
+        )
       },
       onDragEnd: () => {
         clearDrag()
@@ -1320,12 +1823,15 @@ function Sidebar(): React.JSX.Element {
         event.dataTransfer.dropEffect = 'move'
         if (dividerDragRef.current) {
           setChildDropId(null)
+          setSectionDropHint(null)
+          setDividerDropHint(null)
           setDropHint({ id: note.id, before: positionFromEvent(event) })
         } else if (sectionDragRef.current && depth === 0 && !needle && container === '') {
           setChildDropId(null)
           setSectionDropHint(null)
           setDropHint({ id: note.id, before: positionFromEvent(event) })
         } else if (dragIdRef.current && dragIdRef.current !== note.id) {
+          setSectionDropHint(null)
           // Middle of the row = make the dragged note a child of this one;
           // top/bottom edges keep the usual before/after reorder.
           if (depth > 0 || isChildDrop(event)) {
@@ -1398,6 +1904,8 @@ function Sidebar(): React.JSX.Element {
       <li
         key={note.id}
         {...dragAttrs}
+        data-sortable-item
+        data-sortable-id={`note:${note.id}`}
         className={`sidebar__note${draggingId === note.id ? ' sidebar__note--dragging' : ''}${hint ? (hint.before ? ' sidebar__note--drop-before' : ' sidebar__note--drop-after') : ''}${childDropId === note.id ? ' sidebar__note--drop-child' : ''}${dropNoteId === note.id ? ' is-drop-target' : ''}`}
       >
         <div
@@ -1499,6 +2007,7 @@ function Sidebar(): React.JSX.Element {
         {kids.length > 0 && isOpen && (
           <ul
             className="sidebar__notes sidebar__notes--nested"
+            data-sortable-list
             onDragOver={(event) => {
               event.preventDefault()
               if (dragIdRef.current && dragIdRef.current !== note.id) setChildDropId(note.id)
@@ -1544,27 +2053,43 @@ function Sidebar(): React.JSX.Element {
     const renaming = renamingId === section.id
     const hint = sectionDropHint?.id === section.id ? sectionDropHint : null
     return (
-      <li key={section.id} className="sidebar__section-block">
+      <li
+        key={section.id}
+        className="sidebar__section-block"
+        data-sortable-item
+        data-sortable-id={`section:${section.id}`}
+      >
         <div
           draggable={!renaming}
           onDragStart={(event) => {
             sectionDragRef.current = section.id
             setSectionDraggingId(section.id)
             event.dataTransfer.effectAllowed = 'move'
+            beginSortableDrag(
+              event,
+              event.currentTarget.closest<HTMLElement>('li') ?? event.currentTarget,
+              event.currentTarget
+            )
           }}
           onDragEnd={clearSectionDrag}
           onDragOver={(event) => {
             if (sectionDragRef.current && sectionDragRef.current !== section.id) {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'move'
+              setDropHint(null)
               setSectionDropHint({ id: section.id, before: positionAbove(event) })
             } else if (dragIdRef.current || dividerDragRef.current) {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'move'
+              const last = roots.filter((note) => note.id !== dragIdRef.current).at(-1)
+              setDropHint(last ? { id: last.id, before: false } : null)
               setNoteOverSection(section.id)
             }
           }}
-          onDragLeave={() => setNoteOverSection(null)}
+          onDragLeave={() => {
+            setNoteOverSection(null)
+            setDropHint(null)
+          }}
           onDrop={(event) => onSectionDrop(event, section.id)}
           className={`sidebar__divider${sectionDraggingId === section.id ? ' sidebar__divider--dragging' : ''}${hint ? (hint.before ? ' sidebar__divider--drop-before' : ' sidebar__divider--drop-after') : ''}${noteOverSection === section.id ? ' is-note-target' : ''}`}
         >
@@ -1621,7 +2146,14 @@ function Sidebar(): React.JSX.Element {
         {!collapsed && (
           <ul
             className="sidebar__notes"
-            onDragOver={(event) => event.preventDefault()}
+            data-sortable-list
+            onDragOver={(event) => {
+              event.preventDefault()
+              if (dragIdRef.current || dividerDragRef.current) {
+                const last = roots.filter((note) => note.id !== dragIdRef.current).at(-1)
+                setDropHint(last ? { id: last.id, before: false } : null)
+              }
+            }}
             onDrop={(event) => onSectionListDrop(event, section.id)}
           >
             {withDividers(section.id, roots, spaceId, (note, noteIndex) =>
@@ -1659,6 +2191,7 @@ function Sidebar(): React.JSX.Element {
     return (
       <ul
         className="sidebar__notes"
+        data-sortable-list
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => onListDrop(event, spaceId)}
       >
@@ -1753,18 +2286,45 @@ function Sidebar(): React.JSX.Element {
       }}
     >
       <div className="sidebar__top">
-        {IS_MAC && (
-          <div className="sidebar__statusrow">
-            <button
-              type="button"
-              key={coreState}
-              className={`sidebar__state sidebar__state--${coreState} sidebar__status`}
-              title={`Core: ${coreState} · open SeeMO`}
-              aria-label={`Core status: ${coreState} · open SeeMO`}
-              onClick={() => useAppStore.getState().openNav('agent')}
-            />
-          </div>
-        )}
+        <div className="sidebar__chrome">
+          <button
+            type="button"
+            className="sidebar__chrome-btn"
+            title="Collapse sidebar (Ctrl+S)"
+            aria-label="Collapse sidebar"
+            onClick={toggleSidebar}
+          >
+            <SidebarToggleIcon size={16} />
+          </button>
+          <button
+            type="button"
+            className="sidebar__chrome-btn"
+            title="Back to the previous tab"
+            aria-label="Back to the previous tab"
+            disabled={!canGoBack}
+            onClick={goBackTab}
+          >
+            <ChevronLeftIcon size={16} />
+          </button>
+          <button
+            type="button"
+            className="sidebar__chrome-btn"
+            title="Forward to the next tab"
+            aria-label="Forward to the next tab"
+            disabled={!canGoForward}
+            onClick={goForwardTab}
+          >
+            <ChevronRightIcon size={16} />
+          </button>
+          <button
+            type="button"
+            key={coreState}
+            className={`sidebar__state sidebar__state--${coreState} sidebar__status sidebar__status--chrome`}
+            title={`Core: ${coreState} · open SeeMO`}
+            aria-label={`Core status: ${coreState} · open SeeMO`}
+            onClick={() => useAppStore.getState().openNav('agent')}
+          />
+        </div>
         <label className="sidebar__search">
           <SearchIcon size={15} />
           <input
@@ -1776,16 +2336,6 @@ function Sidebar(): React.JSX.Element {
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
-        {!IS_MAC && (
-          <button
-            type="button"
-            key={coreState}
-            className={`sidebar__state sidebar__state--${coreState} sidebar__status sidebar__status--inline`}
-            title={`Core: ${coreState} · open SeeMO`}
-            aria-label={`Core status: ${coreState} · open SeeMO`}
-            onClick={() => useAppStore.getState().openNav('agent')}
-          />
-        )}
       </div>
 
       <div
@@ -1804,149 +2354,181 @@ function Sidebar(): React.JSX.Element {
           setSpaceMenu(at)
         }}
       >
-        <TodaySection />
-
-        {favoriteItems.length > 0 && (
-          <div className="sidebar__favorites" role="group" aria-label="Favorites">
-            {favoriteItems.map((item) => {
-              const token = favoriteToken(item)
-              const dragClass = `${favDragging === token ? ' is-dragging' : ''}${
-                favDropHint?.token === token
-                  ? favDropHint.before
-                    ? ' is-drop-before'
-                    : ' is-drop-after'
-                  : ''
-              }`
-              if (item.kind === 'nav') {
-                const Icon = item.icon
-                const isCurrent = activeNav === item.key
-                return (
-                  <button
-                    key={`nav:${item.key}`}
-                    type="button"
-                    className={`sidebar__fav${isCurrent ? ' is-active' : ''}${dragClass}`}
-                    title={item.label}
-                    aria-label={`${item.label}${isCurrent ? ', open' : ''}`}
-                    onClick={() => openFavorite(item)}
-                    onContextMenu={(event) => {
-                      event.preventDefault()
-                      setNavMenu({ key: item.key, x: event.clientX, y: event.clientY })
-                    }}
-                    {...favoriteDragProps(token)}
-                  >
-                    <Icon size={17} />
-                  </button>
-                )
-              }
-              const { note } = item
-              const label = note.title.trim() || 'Untitled'
-              const space = spaces.find((s) => s.id === note.spaceId)
-              const emoji = note.emoji?.trim() ?? ''
-              const isCurrent = activeTab?.noteId === note.id
-              return (
-                <button
-                  key={`note:${note.id}`}
-                  type="button"
-                  className={`sidebar__fav${isCurrent ? ' is-active' : ''}${dragClass}`}
-                  title={`${label}${space ? ` · ${space.name}` : ''}`}
-                  aria-label={`${label}${isCurrent ? ', open' : ''}`}
-                  onClick={() => openFavorite(item)}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    openMenuAt(note.id, event.clientX, event.clientY)
-                  }}
-                  {...favoriteDragProps(token)}
-                >
-                  {emoji ? (
-                    <span className="sidebar__fav-emoji" aria-hidden="true">
-                      {emoji}
-                    </span>
-                  ) : (
-                    <FileTextIcon size={17} />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        <div className="sidebar__section">
-          <div className="sidebar__section-head">
-            {activeSpace ? (
-              <button
-                type="button"
-                className="sidebar__section-title"
-                title={`Space ${activeSpaceNumber} of ${spaces.length} — ${activeSpace.name} · double-click to rename`}
-                aria-label={`Rename space ${activeSpace.name}`}
-                onDoubleClick={() => openSpaceEditor(activeSpace.id)}
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  openSpaceEditor(activeSpace.id)
-                }}
-              >
-                {notesTitle}
-              </button>
-            ) : (
-              <span className="sidebar__section-title" title="Notes">
-                {notesTitle}
-              </span>
+        {sidebarView === 'notes' ? (
+          <>
+            {sidebarWidgets.today && (
+              <div className="sidebar__widget" style={{ order: widgetOrder('today') }}>
+                <TodaySection />
+              </div>
             )}
-            <button
-              type="button"
-              className="sidebar__icon-btn"
-              title={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
-              aria-label={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
-              onClick={() => createNote()}
-            >
-              <PlusIcon size={22} />
-            </button>
-          </div>
 
-          <div className="sidebar__space-swap">
-            <div
-              className="sidebar__space-track"
-              style={{
-                transform: `translateX(-${activeSpaceIndex < 0 ? 0 : activeSpaceIndex * 100}%)`
-              }}
-            >
-              {(spaces.length > 0 ? spaces : [{ id: '', name: '', emoji: '' }]).map((space) => {
-                const visible = spaceViews.get(space.id)?.visible ?? []
-                const sections = noteSections.filter((section) => section.spaceId === space.id)
-                const ungrouped = visible.filter((note) => sectionOf(note.id, space.id) === null)
-                const isActive = space.id === activeSpaceId
-                return (
-                  <div
-                    key={space.id}
-                    className={`sidebar__space-pane${draggingId && isActive ? ' is-dragging' : ''}`}
-                    aria-hidden={isActive ? undefined : true}
-                    inert={!isActive}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => onPaneDrop(event, space.id)}
-                  >
-                    {needle ? (
-                      visible.length === 0 ? (
-                        <p className="sidebar__empty">No notes match your search.</p>
+            {sidebarWidgets.favorites && favoriteItems.length > 0 && (
+              <div
+                className="sidebar__favorites"
+                data-sortable-list
+                data-sortable-axis="x"
+                style={{ order: widgetOrder('favorites') }}
+                role="group"
+                aria-label="Favorites"
+              >
+                {favoriteItems.map((item) => {
+                  const token = favoriteToken(item)
+                  const dragClass = `${favDragging === token ? ' is-dragging' : ''}${
+                    favDropHint?.token === token
+                      ? favDropHint.before
+                        ? ' is-drop-before'
+                        : ' is-drop-after'
+                      : ''
+                  }`
+                  if (item.kind === 'nav') {
+                    const Icon = item.icon
+                    const isCurrent = activeNav === item.key
+                    return (
+                      <button
+                        key={`nav:${item.key}`}
+                        type="button"
+                        data-sortable-item
+                        data-sortable-id={`fav:${token}`}
+                        className={`sidebar__fav${isCurrent ? ' is-active' : ''}${dragClass}`}
+                        title={item.label}
+                        aria-label={`${item.label}${isCurrent ? ', open' : ''}`}
+                        onClick={() => openFavorite(item)}
+                        onContextMenu={(event) => {
+                          event.preventDefault()
+                          setNavMenu({ key: item.key, x: event.clientX, y: event.clientY })
+                        }}
+                        {...favoriteDragProps(token)}
+                      >
+                        <Icon size={17} />
+                      </button>
+                    )
+                  }
+                  const { note } = item
+                  const label = note.title.trim() || 'Untitled'
+                  const space = spaces.find((s) => s.id === note.spaceId)
+                  const emoji = note.emoji?.trim() ?? ''
+                  const isCurrent = activeTab?.noteId === note.id
+                  return (
+                    <button
+                      key={`note:${note.id}`}
+                      type="button"
+                      data-sortable-item
+                      data-sortable-id={`fav:${token}`}
+                      className={`sidebar__fav${isCurrent ? ' is-active' : ''}${dragClass}`}
+                      title={`${label}${space ? ` · ${space.name}` : ''}`}
+                      aria-label={`${label}${isCurrent ? ', open' : ''}`}
+                      onClick={() => openFavorite(item)}
+                      onContextMenu={(event) => {
+                        event.preventDefault()
+                        openMenuAt(note.id, event.clientX, event.clientY)
+                      }}
+                      {...favoriteDragProps(token)}
+                    >
+                      {emoji ? (
+                        <span className="sidebar__fav-emoji" aria-hidden="true">
+                          {emoji}
+                        </span>
                       ) : (
-                        <ul
-                          className="sidebar__notes"
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={(event) => onListDrop(event, space.id)}
-                        >
-                          {visible.map((note, noteIndex) =>
-                            renderTree(note, 0, [], '', noteIndex, space.id)
-                          )}
-                        </ul>
-                      )
-                    ) : (
-                      renderTopLevel(space.id, sections, ungrouped)
+                        <FileTextIcon size={17} />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {sidebarWidgets.notes && (
+              <div className="sidebar__section" style={{ order: widgetOrder('notes') }}>
+                <div className="sidebar__section-head">
+                  {activeSpace ? (
+                    <button
+                      type="button"
+                      className="sidebar__section-title"
+                      title={`Space ${activeSpaceNumber} of ${spaces.length} — ${activeSpace.name} · double-click to rename`}
+                      aria-label={`Rename space ${activeSpace.name}`}
+                      onDoubleClick={() => openSpaceEditor(activeSpace.id)}
+                      onContextMenu={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        openSpaceEditor(activeSpace.id)
+                      }}
+                    >
+                      {notesTitle}
+                    </button>
+                  ) : (
+                    <span className="sidebar__section-title" title="Notes">
+                      {notesTitle}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="sidebar__icon-btn"
+                    title={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
+                    aria-label={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
+                    onClick={() => createNote()}
+                  >
+                    <PlusIcon size={22} />
+                  </button>
+                </div>
+
+                <div className="sidebar__space-swap">
+                  <div
+                    className="sidebar__space-track"
+                    style={{
+                      transform: `translateX(-${activeSpaceIndex < 0 ? 0 : activeSpaceIndex * 100}%)`
+                    }}
+                  >
+                    {(spaces.length > 0 ? spaces : [{ id: '', name: '', emoji: '' }]).map(
+                      (space) => {
+                        const visible = spaceViews.get(space.id)?.visible ?? []
+                        const sections = noteSections.filter(
+                          (section) => section.spaceId === space.id
+                        )
+                        const ungrouped = visible.filter(
+                          (note) => sectionOf(note.id, space.id) === null
+                        )
+                        const isActive = space.id === activeSpaceId
+                        return (
+                          <div
+                            key={space.id}
+                            className={`sidebar__space-pane${draggingId && isActive ? ' is-dragging' : ''}`}
+                            aria-hidden={isActive ? undefined : true}
+                            inert={!isActive}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={(event) => onPaneDrop(event, space.id)}
+                          >
+                            {needle ? (
+                              visible.length === 0 ? (
+                                <p className="sidebar__empty">No notes match your search.</p>
+                              ) : (
+                                <ul
+                                  className="sidebar__notes"
+                                  data-sortable-list
+                                  onDragOver={(event) => event.preventDefault()}
+                                  onDrop={(event) => onListDrop(event, space.id)}
+                                >
+                                  {visible.map((note, noteIndex) =>
+                                    renderTree(note, 0, [], '', noteIndex, space.id)
+                                  )}
+                                </ul>
+                              )
+                            ) : (
+                              renderTopLevel(space.id, sections, ungrouped)
+                            )}
+                          </div>
+                        )
+                      }
                     )}
                   </div>
-                )
-              })}
-            </div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="sidebar-context">
+            <SidebarContext view={sidebarView} />
           </div>
-        </div>
+        )}
       </div>
 
       {(menu ||
@@ -2518,19 +3100,10 @@ function Sidebar(): React.JSX.Element {
           )
         })()}
       <div className="sidebar__spacebar is-carousel">
-        <button
-          type="button"
-          className={`sidebar__trash-btn${trashOpen ? ' is-active' : ''}`}
-          title="Trash"
-          aria-label="Trash"
-          aria-haspopup="dialog"
-          aria-expanded={trashOpen}
-          onClick={() => setTrashOpen((value) => !value)}
-        >
-          <TrashIcon size={16} />
-        </button>
         <div
           className="sidebar__space-icons"
+          data-sortable-list
+          data-sortable-axis="x"
           ref={spaceCarouselRef}
           role="group"
           aria-label="Spaces"
@@ -2543,6 +3116,8 @@ function Sidebar(): React.JSX.Element {
                 key={space.id}
                 type="button"
                 data-space-id={space.id}
+                data-sortable-item
+                data-sortable-id={`space:${space.id}`}
                 draggable
                 className={`sidebar__space-icon${space.id === activeSpaceId ? ' is-active' : ''} is-distance-${Math.min(circularDistance, 3)}${spaceDraggingId === space.id ? ' is-dragging' : ''}${spaceDropHint?.id === space.id ? (spaceDropHint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
                 title={space.emoji.trim() ? `${space.emoji} ${space.name}` : space.name}
@@ -2554,6 +3129,7 @@ function Sidebar(): React.JSX.Element {
                   setSpaceDraggingId(space.id)
                   event.dataTransfer.effectAllowed = 'move'
                   event.dataTransfer.setData('text/plain', space.id)
+                  beginSortableDrag(event, event.currentTarget)
                 }}
                 onDragEnd={() => {
                   spaceDragRef.current = null
@@ -2612,23 +3188,10 @@ function Sidebar(): React.JSX.Element {
             )
           })}
         </div>
-        <button
-          type="button"
-          className="sidebar__space-add"
-          title="Create space"
-          aria-label="Create space"
-          onClick={() => openSpaceEditor(null)}
-        >
-          <PlusIcon size={18} />
-        </button>
       </div>
 
       {trashOpen && (
-        <div
-          className="rail-menu rail-menu--trash rail-menu--sidebar"
-          role="dialog"
-          aria-label="Trash"
-        >
+        <div className="rail-menu rail-menu--trash" role="dialog" aria-label="Trash">
           <div className="rail-menu__head rail-menu__head--trash">
             <span className="rail-menu__name">Trash</span>
             <span className="rail-menu__count">{trashed.length}</span>

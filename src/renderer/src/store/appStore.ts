@@ -147,8 +147,22 @@ export function clampSplitRatio(ratio: unknown): number {
 /** Calendar display mode. Kept transient (not persisted). */
 export type CalendarView = 'month' | 'week' | 'day'
 
+/** Tasks-page filter selected from the contextual sidebar. */
+export type TaskFilter = 'all' | 'today' | 'overdue' | 'completed'
+
 /** Appearance: fixed dark/light, or follow the OS. */
 export type ThemeMode = 'dark' | 'light' | 'system'
+
+/** Customizable blocks in the sidebar, top to bottom. */
+export type SidebarWidgetKey = 'today' | 'favorites' | 'notes'
+
+export const DEFAULT_SIDEBAR_WIDGETS: Record<SidebarWidgetKey, boolean> = {
+  today: true,
+  favorites: true,
+  notes: true
+}
+
+export const DEFAULT_SIDEBAR_WIDGET_ORDER: SidebarWidgetKey[] = ['today', 'favorites', 'notes']
 
 /** One daily clock alarm. `quietUntil` suppresses re-fire right after stop. */
 export interface AlarmItem {
@@ -265,6 +279,12 @@ interface AppState {
   sidebarWidth: number
   /** Sidebar hidden (Notion-style collapse). Persists across sessions. */
   sidebarCollapsed: boolean
+  /** Which sidebar widgets are visible. */
+  sidebarWidgets: Record<SidebarWidgetKey, boolean>
+  /** Sidebar widget order, top to bottom. */
+  sidebarWidgetOrder: SidebarWidgetKey[]
+  /** Transient: the Trash popover is open (opened from the rail). */
+  trashOpen: boolean
   /** Today-section event ids the user dismissed (hidden, not deleted). */
   dismissedTodayEvents: string[]
   /** Tab pinned in the right split pane; null = no split. */
@@ -273,6 +293,7 @@ interface AppState {
   splitRatio: number
   calendarView: CalendarView
   calendarCursor: string
+  taskFilter: TaskFilter
   /** Daily clock alarms (HH:MM). Multiple instances allowed. */
   alarms: AlarmItem[]
   /** Countdown timers, driven by wall-clock endsAt timestamps. */
@@ -294,6 +315,9 @@ interface AppState {
   showTodayEvent: (id: string) => void
   showAllTodayEvents: () => void
   toggleSidebar: () => void
+  setSidebarWidgetVisible: (key: SidebarWidgetKey, visible: boolean) => void
+  moveSidebarWidget: (key: SidebarWidgetKey, direction: -1 | 1) => void
+  setTrashOpen: (open: boolean) => void
   /** Transient signal (incremented) asking App to re-lock the app. */
   lockRequested: number
   requestLock: () => void
@@ -306,6 +330,7 @@ interface AppState {
   goForwardTab: () => void
   setCalendarView: (view: CalendarView) => void
   setCalendarCursor: (date: string) => void
+  setTaskFilter: (filter: TaskFilter) => void
   openDay: (date: string) => void
   addAlarm: (time?: string | null) => string
   removeAlarm: (id: string) => void
@@ -1107,12 +1132,16 @@ export const useAppStore = create<AppState>()(
       theme: 'dark',
       sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
       sidebarCollapsed: false,
+      sidebarWidgets: { ...DEFAULT_SIDEBAR_WIDGETS },
+      sidebarWidgetOrder: [...DEFAULT_SIDEBAR_WIDGET_ORDER],
+      trashOpen: false,
       lockRequested: 0,
       dismissedTodayEvents: [],
       splitTabId: null,
       splitRatio: SPLIT_RATIO_DEFAULT,
       calendarView: 'month',
       calendarCursor: todayISO(),
+      taskFilter: 'all',
       alarms: [],
       timers: [],
       stopwatches: [],
@@ -1154,6 +1183,20 @@ export const useAppStore = create<AppState>()(
         })),
       showAllTodayEvents: () => set({ dismissedTodayEvents: [] }),
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      setSidebarWidgetVisible: (key, visible) =>
+        set((state) => ({
+          sidebarWidgets: { ...state.sidebarWidgets, [key]: visible }
+        })),
+      moveSidebarWidget: (key, direction) =>
+        set((state) => {
+          const order = [...state.sidebarWidgetOrder]
+          const at = order.indexOf(key)
+          const to = at + direction
+          if (at < 0 || to < 0 || to >= order.length) return {}
+          ;[order[at], order[to]] = [order[to], order[at]]
+          return { sidebarWidgetOrder: order }
+        }),
+      setTrashOpen: (trashOpen) => set({ trashOpen }),
       requestLock: () => set((state) => ({ lockRequested: state.lockRequested + 1 })),
       setSplitTab: (splitTabId) => set({ splitTabId }),
       setSplitRatio: (splitRatio) => set({ splitRatio: clampSplitRatio(splitRatio) }),
@@ -1297,6 +1340,7 @@ export const useAppStore = create<AppState>()(
         }),
       setCalendarView: (calendarView) => set({ calendarView }),
       setCalendarCursor: (calendarCursor) => set({ calendarCursor }),
+      setTaskFilter: (taskFilter) => set({ taskFilter }),
       openDay: (date) => {
         set({ calendarView: 'day', calendarCursor: date })
         get().openNav('calendar')
@@ -2677,6 +2721,8 @@ export const useAppStore = create<AppState>()(
         theme: state.theme,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,
+        sidebarWidgets: state.sidebarWidgets,
+        sidebarWidgetOrder: state.sidebarWidgetOrder,
         dismissedTodayEvents: state.dismissedTodayEvents,
         splitTabId: state.splitTabId,
         splitRatio: state.splitRatio,
@@ -2747,6 +2793,8 @@ export const useAppStore = create<AppState>()(
             | 'theme'
             | 'sidebarWidth'
             | 'sidebarCollapsed'
+            | 'sidebarWidgets'
+            | 'sidebarWidgetOrder'
             | 'dismissedTodayEvents'
             | 'splitTabId'
             | 'splitRatio'
@@ -2952,6 +3000,23 @@ export const useAppStore = create<AppState>()(
         }
         const collapsedTabGroups = (saved.collapsedTabGroups ?? []).filter((id) => groupIds.has(id))
         const spaceTabs = sanitizeSpaceTabs(saved.spaceTabs, notes)
+        const widgetKeys = DEFAULT_SIDEBAR_WIDGET_ORDER
+        const savedOrder = Array.isArray(saved.sidebarWidgetOrder)
+          ? saved.sidebarWidgetOrder.filter(
+              (key): key is SidebarWidgetKey =>
+                typeof key === 'string' && (widgetKeys as string[]).includes(key)
+            )
+          : []
+        const sidebarWidgetOrder = [
+          ...new Set([...savedOrder, ...widgetKeys])
+        ] as SidebarWidgetKey[]
+        const sidebarWidgets = { ...DEFAULT_SIDEBAR_WIDGETS }
+        if (saved.sidebarWidgets && typeof saved.sidebarWidgets === 'object') {
+          for (const key of widgetKeys) {
+            const value = saved.sidebarWidgets[key]
+            if (typeof value === 'boolean') sidebarWidgets[key] = value
+          }
+        }
         // Never pop the bubble for history that predates this launch: seed
         // "seen" at the newest restored SeeMO message.
         let lastSeenAgentId = saved.lastSeenAgentId ?? null
@@ -2990,6 +3055,8 @@ export const useAppStore = create<AppState>()(
           theme: saved.theme === 'light' || saved.theme === 'system' ? saved.theme : 'dark',
           sidebarWidth: clampSidebarWidth(saved.sidebarWidth),
           sidebarCollapsed: saved.sidebarCollapsed ?? false,
+          sidebarWidgets,
+          sidebarWidgetOrder,
           dismissedTodayEvents: Array.isArray(saved.dismissedTodayEvents)
             ? saved.dismissedTodayEvents.filter((d) => typeof d === 'string')
             : [],

@@ -1,15 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 import { isInlineNav } from '../nav'
 import { TAB_GROUP_COLORS, useAppStore, type Tab } from '../store/appStore'
-import {
-  FileTextIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  PinIcon,
-  PlusIcon,
-  SidebarToggleIcon,
-  XIcon
-} from './icons'
+import { FileTextIcon, PinIcon, PlusIcon, SidebarToggleIcon, XIcon } from './icons'
 
 interface DropHint {
   id: string
@@ -28,9 +21,6 @@ function clampMenu(x: number, y: number): { x: number; y: number } {
   }
 }
 
-/** macOS floats the traffic lights over the top-left of the window. */
-const IS_MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
-
 function TabBar(): React.JSX.Element {
   const tabs = useAppStore((state) => state.tabs)
   const activeTabId = useAppStore((state) => state.activeTabId)
@@ -39,14 +29,10 @@ function TabBar(): React.JSX.Element {
   // them; floating windows leave the note underneath lit.
   const noteVisible = activeNav === null || !isInlineNav(activeNav)
   const notes = useAppStore((state) => state.notes)
-  const tabHistory = useAppStore((state) => state.tabHistory)
-  const historyIndex = useAppStore((state) => state.historyIndex)
   const tabGroups = useAppStore((state) => state.tabGroups)
   const tabGroup = useAppStore((state) => state.tabGroup)
   const collapsedTabGroups = useAppStore((state) => state.collapsedTabGroups)
   const setActiveTab = useAppStore((state) => state.setActiveTab)
-  const goBackTab = useAppStore((state) => state.goBackTab)
-  const goForwardTab = useAppStore((state) => state.goForwardTab)
   const closeTab = useAppStore((state) => state.closeTab)
   const moveTab = useAppStore((state) => state.moveTab)
   const toggleTabPinned = useAppStore((state) => state.toggleTabPinned)
@@ -72,11 +58,7 @@ function TabBar(): React.JSX.Element {
   const [renameDraft, setRenameDraft] = useState('')
   const dragIdRef = useRef<string | null>(null)
   const dragGroupRef = useRef<string | null>(null)
-
-  // Browser-style history: Back revisits the previously active tab,
-  // Forward redoes it. New visits truncate the forward trail.
-  const canGoBack = historyIndex > 0
-  const canGoForward = historyIndex >= 0 && historyIndex < tabHistory.length - 1
+  const tabbarRef = useRef<HTMLDivElement>(null)
 
   // Esc closes the context menu.
   useEffect(() => {
@@ -103,6 +85,20 @@ function TabBar(): React.JSX.Element {
     setGroupDropHint(null)
     setTabGroupHint(null)
   }
+
+  const sortableHints = [
+    ...(dropHint ? [{ id: `tab:${dropHint.id}`, before: dropHint.before }] : []),
+    ...(groupDropHint ? [{ id: `group:${groupDropHint.id}`, before: groupDropHint.before }] : [])
+  ]
+  useSortableMakeSpace({
+    rootRef: tabbarRef,
+    activeId: draggingGroupId
+      ? `group:${draggingGroupId}`
+      : draggingId
+        ? `tab:${draggingId}`
+        : null,
+    hints: sortableHints
+  })
 
   // Which side of the hovered tab the dragged tab would land on.
   const positionFromEvent = (event: React.DragEvent<HTMLDivElement>): boolean => {
@@ -187,20 +183,27 @@ function TabBar(): React.JSX.Element {
       <div
         key={tab.id}
         draggable
+        data-sortable-item
+        data-sortable-id={`tab:${tab.id}`}
         onDragStart={(event) => {
           dragIdRef.current = tab.id
           setDraggingId(tab.id)
           event.dataTransfer.effectAllowed = 'move'
+          beginSortableDrag(event, event.currentTarget)
         }}
         onDragEnd={clearDrag}
         onDragOver={(event) => {
           // Group-header drags are handled by the group container;
           // don't swallow them here so the group can be the drop target.
-          if (dragGroupRef.current) return
+          if (dragGroupRef.current) {
+            setGroupDropHint(null)
+            return
+          }
           event.preventDefault()
           event.stopPropagation()
           event.dataTransfer.dropEffect = 'move'
           if (dragIdRef.current && dragIdRef.current !== tab.id) {
+            setGroupDropHint(null)
             setDropHint({ id: tab.id, before: positionFromEvent(event) })
           }
         }}
@@ -252,11 +255,7 @@ function TabBar(): React.JSX.Element {
   const menuTabGroup = menuTab ? groupOf(menuTab.id) : null
 
   return (
-    <div
-      className={`tabbar${sidebarCollapsed && IS_MAC ? ' tabbar--clear-lights' : ''}`}
-      role="tablist"
-      aria-label="Open note tabs"
-    >
+    <div ref={tabbarRef} className="tabbar" role="tablist" aria-label="Open note tabs">
       {sidebarCollapsed && (
         <button
           type="button"
@@ -268,30 +267,10 @@ function TabBar(): React.JSX.Element {
           <SidebarToggleIcon size={17} />
         </button>
       )}
-      <div className="tabbar__nav" role="group" aria-label="Switch tabs">
-        <button
-          type="button"
-          className="tabbar__new"
-          title="Back to the previous tab"
-          aria-label="Back to the previous tab"
-          disabled={!canGoBack}
-          onClick={() => goBackTab()}
-        >
-          <ChevronLeftIcon size={15} />
-        </button>
-        <button
-          type="button"
-          className="tabbar__new"
-          title="Forward to the next tab"
-          aria-label="Forward to the next tab"
-          disabled={!canGoForward}
-          onClick={() => goForwardTab()}
-        >
-          <ChevronRightIcon size={15} />
-        </button>
-      </div>
       <div
         className={`tabbar__list${tabs.length > 2 ? ' is-divided' : ''}`}
+        data-sortable-list
+        data-sortable-axis="x"
         onDragOver={(event) => event.preventDefault()}
         onDrop={onListDrop}
       >
@@ -314,6 +293,10 @@ function TabBar(): React.JSX.Element {
           return (
             <div
               key={group.id}
+              data-sortable-list
+              data-sortable-axis="x"
+              data-sortable-item
+              data-sortable-id={`group:${group.id}`}
               className={`tabgroup${draggingGroupId === group.id ? ' tabgroup--dragging' : ''}${groupHint ? (groupHint.before ? ' tabgroup--drop-before' : ' tabgroup--drop-after') : ''}${tabGroupHint === group.id ? ' tabgroup--drop-target' : ''}`}
               style={{ '--group-color': group.color } as CSSProperties}
               onDragOver={(event) => {
@@ -330,6 +313,7 @@ function TabBar(): React.JSX.Element {
                 if (dragId && groupOf(dragId) !== group.id) {
                   event.preventDefault()
                   event.dataTransfer.dropEffect = 'move'
+                  setDropHint(null)
                   setTabGroupHint((prev) => (prev === group.id ? prev : group.id))
                 }
               }}
@@ -349,6 +333,7 @@ function TabBar(): React.JSX.Element {
                   dragGroupRef.current = group.id
                   setDraggingGroupId(group.id)
                   event.dataTransfer.effectAllowed = 'move'
+                  beginSortableDrag(event, event.currentTarget.closest('.tabgroup') as HTMLElement)
                 }}
                 onDragEnd={clearDrag}
                 onContextMenu={(event) => {

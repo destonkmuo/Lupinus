@@ -7,6 +7,7 @@ import { GripIcon } from './icons'
 import type { ImageControls } from '../images'
 import { blockKind, isRichKind } from '../richText'
 import { filteredSlash, slashToken, type ChildKind, type SlashCommand } from '../slash'
+import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 
 export type { ChildKind } from '../slash'
 
@@ -558,6 +559,8 @@ function BlockEditor({
     setDraggingId(index)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData(BLOCK_MIME, String(index))
+    const row = event.currentTarget.closest<HTMLElement>('.block-row')
+    if (row) beginSortableDrag(event, row)
   }
 
   const hintFromEvent = (
@@ -1057,10 +1060,17 @@ function BlockEditor({
     if (cut) deleteSelected()
   }
 
+  useSortableMakeSpace({
+    rootRef: containerRef,
+    activeId: draggingId !== null ? `block:${draggingId}` : null,
+    hints: dropHint ? [{ id: `block:${dropHint.index}`, before: dropHint.before }] : []
+  })
+
   return (
     <div
       className="blocks"
       ref={containerRef}
+      data-sortable-list
       tabIndex={-1}
       onClick={onContainerClick}
       onKeyDown={onContainerKeyDown}
@@ -1091,6 +1101,8 @@ function BlockEditor({
           <div
             key={`row-${index}`}
             data-row={index}
+            data-sortable-item
+            data-sortable-id={`block:${index}`}
             className={`block-row${hint}${dragging}${isSel}`}
             style={frozenFor(index) !== undefined ? { minHeight: frozenFor(index) } : undefined}
             onDragOver={(event) => onRowDragOver(event, index)}

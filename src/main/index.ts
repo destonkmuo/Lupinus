@@ -7,6 +7,7 @@ import { startVoice, stopVoice, speakResponse } from './voice'
 import { registerGithubHandlers } from './github'
 import { applyDockIcon } from './icon'
 import { registerLockHandlers } from './lock'
+import { registerChromeHandlers } from './chrome'
 import { handleActivate, registerOrbHandlers, trackMainWindow } from './orb'
 import { registerMediaHandlers, registerMediaScheme } from './media'
 import { registerVaultHandlers } from './vault'
@@ -41,8 +42,9 @@ function createWindow(): void {
     autoHideMenuBar: true,
     // Native backdrop behind the web content: without this Electron shows
     // white here, which flashes as a trailing edge during live resizes
-    // before the renderer repaints. Matches the app canvas (--main-bg).
-    backgroundColor: '#202020',
+    // before the renderer repaints. Matches the chrome canvas around the
+    // floating main viewport (--chrome-bg, same as the sidebar).
+    backgroundColor: '#1b1b1b',
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset',
@@ -133,6 +135,9 @@ app.whenReady().then(() => {
 
   // Picture-in-picture orb + core-state relay between windows.
   registerOrbHandlers()
+
+  // Native macOS traffic lights: hide them while the sidebar is collapsed.
+  registerChromeHandlers()
 
   createWindow()
 

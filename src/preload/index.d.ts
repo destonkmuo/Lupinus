@@ -9,6 +9,7 @@ interface VoiceApi {
   announceCore: (state: string) => void
   focusApp: () => Promise<void>
   setOrbEnabled: (enabled: boolean) => void
+  setSidebarCollapsed: (collapsed: boolean) => void
   speak: (text: string) => Promise<boolean>
   importAlarmSound: () => Promise<{ name: string; url: string } | null>
   maxAlarmVolume: () => Promise<{ ok: boolean; error?: string }>

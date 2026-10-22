@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useAppStore } from '../store/appStore'
+import { useAppStore, type SidebarWidgetKey } from '../store/appStore'
 import type { GithubStatus } from '../../../preload/github'
 
 function GithubBackup(): React.JSX.Element {
@@ -422,6 +422,12 @@ function LockSettings(): React.JSX.Element {
   )
 }
 
+const SIDEBAR_WIDGET_LABELS: Record<SidebarWidgetKey, { label: string; hint: string }> = {
+  today: { label: 'Today', hint: "Today's events and tasks" },
+  favorites: { label: 'Favorites', hint: 'Pinned pages and notes' },
+  notes: { label: 'Notes', hint: 'Space name and the note list' }
+}
+
 function Settings(): React.JSX.Element {
   const notes = useAppStore((state) => state.notes)
   const backgroundListening = useAppStore((state) => state.backgroundListening)
@@ -430,6 +436,10 @@ function Settings(): React.JSX.Element {
   const setOrbEnabled = useAppStore((state) => state.setOrbEnabled)
   const theme = useAppStore((state) => state.theme)
   const setTheme = useAppStore((state) => state.setTheme)
+  const sidebarWidgets = useAppStore((state) => state.sidebarWidgets)
+  const sidebarWidgetOrder = useAppStore((state) => state.sidebarWidgetOrder)
+  const setSidebarWidgetVisible = useAppStore((state) => state.setSidebarWidgetVisible)
+  const moveSidebarWidget = useAppStore((state) => state.moveSidebarWidget)
   const ttsEnabled = useAppStore((state) => state.ttsEnabled)
   const setTtsEnabled = useAppStore((state) => state.setTtsEnabled)
   const vaultPath = useAppStore((state) => state.vaultPath)
@@ -470,6 +480,53 @@ function Settings(): React.JSX.Element {
               : theme === 'light'
                 ? 'Light theme.'
                 : 'Dark theme.'}
+          </p>
+        </section>
+
+        <section className="settings__section">
+          <h2 className="settings__section-title">Sidebar</h2>
+          <div className="settings__widgets">
+            {sidebarWidgetOrder.map((key, index) => (
+              <div key={key} className="settings__widget-row">
+                <label className="settings__check settings__widget-label">
+                  <input
+                    type="checkbox"
+                    checked={sidebarWidgets[key]}
+                    onChange={(event) => setSidebarWidgetVisible(key, event.target.checked)}
+                  />
+                  <span>
+                    {SIDEBAR_WIDGET_LABELS[key].label}
+                    <span className="settings__widget-hint">{SIDEBAR_WIDGET_LABELS[key].hint}</span>
+                  </span>
+                </label>
+                <div className="settings__widget-actions">
+                  <button
+                    type="button"
+                    className="settings__widget-btn"
+                    disabled={index === 0}
+                    title="Move up"
+                    aria-label={`Move ${SIDEBAR_WIDGET_LABELS[key].label} up`}
+                    onClick={() => moveSidebarWidget(key, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="settings__widget-btn"
+                    disabled={index === sidebarWidgetOrder.length - 1}
+                    title="Move down"
+                    aria-label={`Move ${SIDEBAR_WIDGET_LABELS[key].label} down`}
+                    onClick={() => moveSidebarWidget(key, 1)}
+                  >
+                    ↓
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="settings__note">
+            Show, hide, and reorder the sidebar widgets. The space name and everything above the
+            note list stay fixed; only the note list scrolls.
           </p>
         </section>
 

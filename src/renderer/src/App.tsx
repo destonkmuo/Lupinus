@@ -201,6 +201,12 @@ function App(): React.JSX.Element {
     window.api.setOrbEnabled(orbEnabled)
   }, [orbEnabled])
 
+  // macOS traffic lights stay put and hide while the sidebar is collapsed.
+  const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed)
+  useEffect(() => {
+    window.api.setSidebarCollapsed?.(sidebarCollapsed)
+  }, [sidebarCollapsed])
+
   // Clock watcher: fires due alarms and expired timers wherever you are in
   // the app (the Misc page only displays them). Timestamps are the source of
   // truth; this just flips flags and starts the shared sound loop.

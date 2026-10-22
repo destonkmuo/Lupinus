@@ -26,6 +26,7 @@ import {
   type SlashCommand
 } from '../slash'
 import SlashMenu from './SlashMenu'
+import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 
 export type { ChildKind } from '../slash'
 
@@ -522,16 +523,59 @@ const GRIP_SVG =
   '<circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/>' +
   '<circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>'
 
+/** A row that renders something, even when it carries no plain text. */
+function lineHasContent(line: HTMLElement): boolean {
+  const kind = lineKindOf(line)
+  if (kind === 'rule' || kind === 'math' || kind === 'code') return true
+  if (line.querySelector('img')) return true
+  return lineTextOf(line).trim() !== ''
+}
+
+/** Empty blocks stay inert: no grip, no hover box, nothing to select. */
+function blockHasContent(lines: HTMLElement[], start: number, end: number): boolean {
+  for (let row = start; row <= end; row += 1) {
+    if (lineHasContent(lines[row])) return true
+  }
+  return false
+}
+
+/** Stretch the editor's single selection box over the block's full run. */
+function positionBlockHighlight(root: HTMLElement, id: string): void {
+  const rows = getLines(root).filter((line) => line.dataset.block === id)
+  if (!rows.length) return
+  const first = rows[0]
+  const last = rows[rows.length - 1]
+  const rootRect = root.getBoundingClientRect()
+  const firstRect = first.getBoundingClientRect()
+  const lastRect = last.getBoundingClientRect()
+  root.style.setProperty('--block-highlight-left', `${firstRect.left - rootRect.left}px`)
+  root.style.setProperty('--block-highlight-top', `${firstRect.top - rootRect.top}px`)
+  root.style.setProperty('--block-highlight-width', `${firstRect.width}px`)
+  root.style.setProperty('--block-highlight-height', `${lastRect.bottom - firstRect.top}px`)
+}
+
+function clearBlockHighlight(root: HTMLElement): void {
+  root.style.removeProperty('--block-highlight-left')
+  root.style.removeProperty('--block-highlight-top')
+  root.style.removeProperty('--block-highlight-width')
+  root.style.removeProperty('--block-highlight-height')
+}
+
 /**
- * Paint explicit block runs: first/last rounded edges, and a drag handle on
- * the first row. Blocks are contiguous rows sharing `data-block`.
+ * Paint explicit block runs: first/last markers, a drag handle on the first
+ * row, and the single hover box. Blocks are contiguous rows sharing
+ * `data-block`.
  */
 function decorateBlocks(root: HTMLElement): void {
   const lines = getLines(root)
-  lines.forEach((line) => {
+  lines.forEach((line, index) => {
     line.classList.remove('nl--block-first', 'nl--block-last', 'ne-block-hover')
     line.querySelector(':scope > .ne-block__grip')?.remove()
+    line.dataset.sortableItem = ''
+    line.dataset.sortableId = line.dataset.block ?? `line:${line.dataset.line ?? index}`
   })
+  const hoverId = root.dataset.hoverBlock
+  let hoverPainted = false
   let index = 0
   while (index < lines.length) {
     const id = lines[index].dataset.block
@@ -543,9 +587,24 @@ function decorateBlocks(root: HTMLElement): void {
     while (end + 1 < lines.length && lines[end + 1].dataset.block === id) end += 1
     const first = lines[index]
     const last = lines[end]
+    const hasContent = blockHasContent(lines, index, end)
     first.classList.add('nl--block-first')
-    if (root.dataset.hoverBlock === id) first.classList.add('ne-block-hover')
+    if (hasContent && hoverId === id) {
+      hoverPainted = true
+      for (let row = index; row <= end; row += 1) lines[row].classList.add('ne-block-hover')
+      positionBlockHighlight(root, id)
+    }
     last.classList.add('nl--block-last')
+    // An empty first row has no editable text to anchor a caret. Injecting a
+    // grip there makes the browser jump to the previous row when the user
+    // starts typing, so wait until the row has content.
+    if (
+      !hasContent ||
+      (lineTextOf(first).trim() === '' && !isAtomic(first) && !first.querySelector(':scope > pre'))
+    ) {
+      index = end + 1
+      continue
+    }
     const grip = document.createElement('span')
     grip.className = 'ne-block__grip'
     grip.setAttribute('contenteditable', 'false')
@@ -558,41 +617,113 @@ function decorateBlocks(root: HTMLElement): void {
     first.insertBefore(grip, first.firstChild)
     index = end + 1
   }
+  if (hoverId && !hoverPainted) {
+    delete root.dataset.hoverBlock
+    clearBlockHighlight(root)
+  }
 }
 
-function serializeLine(line: HTMLElement): string {
-  const kind = lineKindOf(line)
-  switch (kind) {
-    case 'rule':
-      return '---'
-    case 'math': {
-      const tex = line.querySelector<HTMLElement>('[data-tex]')?.dataset.tex ?? ''
-      return `$$${tex}$$`
-    }
-    case 'code': {
-      const lang = line.dataset.lang ?? ''
-      const body = line.querySelector('pre')?.textContent ?? ''
-      return `\`\`\`${lang}\n${body}\n\`\`\``
-    }
+/** Markdown for one line, given the text to use (full line or a copy slice). */
+function serializeLineText(line: HTMLElement, text: string): string {
+  switch (lineKindOf(line)) {
     case 'heading': {
       const level = Math.max(1, Math.min(6, Number(line.dataset.level) || 1))
-      return `${'#'.repeat(level)} ${lineTextOf(line).replace(/^\s+/, '')}`
+      return `${'#'.repeat(level)} ${text.replace(/^\s+/, '')}`
     }
     case 'quote':
-      return `> ${lineTextOf(line).replace(/^\s+/, '')}`
+      return `> ${text.replace(/^\s+/, '')}`
     case 'bullet':
-      return `- ${lineTextOf(line).replace(/^\s+/, '')}`
+      return `- ${text.replace(/^\s+/, '')}`
     case 'ordered':
-      return `${line.dataset.number ?? '1'}. ${lineTextOf(line).replace(/^\s+/, '')}`
+      return `${line.dataset.number ?? '1'}. ${text.replace(/^\s+/, '')}`
     case 'task': {
       const checked = line.querySelector<HTMLInputElement>(
         ':scope > input[type="checkbox"]'
       )?.checked
-      return `- [${checked ? 'x' : ' '}] ${lineTextOf(line).replace(/^\s+/, '')}`
+      return `- [${checked ? 'x' : ' '}] ${text.replace(/^\s+/, '')}`
     }
     default:
-      return lineTextOf(line).replace(/\n+$/, '')
+      return text.replace(/\n+$/, '')
   }
+}
+
+function serializeLine(line: HTMLElement): string {
+  const kind = lineKindOf(line)
+  if (kind === 'rule') return '---'
+  if (kind === 'math') {
+    const tex = line.querySelector<HTMLElement>('[data-tex]')?.dataset.tex ?? ''
+    return `$$${tex}$$`
+  }
+  if (kind === 'code') {
+    const lang = line.dataset.lang ?? ''
+    const body = line.querySelector('pre')?.textContent ?? ''
+    return `\`\`\`${lang}\n${body}\n\`\`\``
+  }
+  return serializeLineText(line, lineTextOf(line))
+}
+
+/**
+ * Markdown for the current DOM selection, so copy carries block markers with
+ * it (`# Heading`, `- [ ] task`, fences, inline emphasis). Returns null when
+ * there is nothing structural to customize (the browser's copy is used).
+ */
+function copySelectionMarkdown(root: HTMLElement, range: Range): string | null {
+  const startLine = lineFromNode(range.startContainer)
+  const endLine = lineFromNode(range.endContainer)
+  if (!startLine || !endLine || !root.contains(startLine) || !root.contains(endLine)) return null
+  const all = getLines(root)
+  const a = all.indexOf(startLine)
+  const b = all.indexOf(endLine)
+  if (a < 0 || b < 0) return null
+  const lo = Math.min(a, b)
+  const hi = Math.max(a, b)
+
+  const sliceFor = (line: HTMLElement, first: boolean, last: boolean): string => {
+    const kind = lineKindOf(line)
+    if (kind === 'rule') return ''
+    if (kind === 'math') return lineTextOf(line)
+    const host = textHost(line)
+    if (!first && !last) return lineTextOf(line)
+    const pre = document.createRange()
+    pre.selectNodeContents(host)
+    if (first && host.contains(range.startContainer)) {
+      pre.setStart(range.startContainer, range.startOffset)
+    }
+    if (last && host.contains(range.endContainer)) {
+      pre.setEnd(range.endContainer, range.endOffset)
+    }
+    const fragment = pre.cloneContents()
+    return kind === 'code' ? (fragment.textContent ?? '') : inlineFromDom(fragment)
+  }
+
+  const out: string[] = []
+  for (let i = lo; i <= hi; i++) {
+    const line = all[i]
+    const kind = lineKindOf(line)
+    if (kind === 'code') {
+      // Adjacent code rows paste as one fenced block, matching the saved form.
+      const lang = line.dataset.lang ?? ''
+      const body: string[] = []
+      let j = i
+      while (j <= hi && lineKindOf(all[j]) === 'code') {
+        body.push(sliceFor(all[j], j === lo, j === hi))
+        j += 1
+      }
+      out.push(`\`\`\`${lang}\n${body.join('\n')}\n\`\`\``)
+      i = j - 1
+      continue
+    }
+    if (kind === 'rule' || kind === 'math') {
+      out.push(serializeLine(line))
+      continue
+    }
+    const text = sliceFor(line, i === lo, i === hi)
+    // A structural marker with no selected text is noise (e.g. selecting from
+    // the end of the previous line); plain blank rows are kept as spacing.
+    if (!text && kind !== 'paragraph') continue
+    out.push(serializeLineText(line, text))
+  }
+  return out.join('\n')
 }
 
 interface SerializedLine {
@@ -732,6 +863,10 @@ function NoteEditor({
     caret: { line: HTMLElement; offset: number } | null
   } | null>(null)
   const gripPressedRef = useRef<HTMLElement | null>(null)
+  const [blockDrag, setBlockDrag] = useState<{
+    id: string
+    hint: { id: string; before: boolean } | null
+  } | null>(null)
 
   const imagesRef = useRef(images)
   const placeholderRef = useRef(placeholder)
@@ -1488,9 +1623,7 @@ function NoteEditor({
         post.setStart(range.startContainer, range.startOffset)
         fragment.appendChild(post.extractContents())
         // A task row's checkbox is structural, not text; never duplicate it.
-        fragment
-          .querySelectorAll('input[type="checkbox"]')
-          .forEach((input) => input.remove())
+        fragment.querySelectorAll('input[type="checkbox"]').forEach((input) => input.remove())
       }
       const nextKind: LineKind = kind === 'heading' ? 'paragraph' : kind
       next = makeLine(nextKind, 1, nextBlockId())
@@ -1501,9 +1634,11 @@ function NoteEditor({
     const newId = next.dataset.block as string
     const at = group.indexOf(line)
     for (const el of group.slice(at + 1)) el.dataset.block = newId
-    refreshLineMeta(root, placeholderRef.current)
-    placeCaret(next, 'start')
+    // Commit first: decorating the new block injects its drag grip, which
+    // would invalidate a caret placed before it. Put the caret in the new
+    // block afterwards so Shift+Enter visibly moves editing out of the old one.
     commit(true)
+    placeCaret(next, 'start')
   }
 
   /** Move block rows as one unit before `anchor` (null appends). */
@@ -1571,6 +1706,7 @@ function NoteEditor({
     }
     dragBlockRef.current = null
     gripPressedRef.current = null
+    setBlockDrag(null)
   }
 
   const onBlockMouseDown = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -1595,11 +1731,12 @@ function NoteEditor({
         ? { line: active, offset: caretOffset(textHost(active)) }
         : null
     dragBlockRef.current = { id, lines: rows, caret }
+    setBlockDrag({ id, hint: null })
     rows.forEach((el) => el.classList.add('nl--dragging'))
     event.stopPropagation()
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData(BLOCK_MIME, id)
-    event.dataTransfer.setDragImage(rows[0], 16, 12)
+    beginSortableDrag(event, rows[0], rows)
   }
 
   const onBlockDragOver = (event: React.DragEvent<HTMLDivElement>): void => {
@@ -1611,10 +1748,23 @@ function NoteEditor({
     event.dataTransfer.dropEffect = 'move'
     clearBlockDropMarks(root)
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.nl') : null
-    if (!target || !root.contains(target) || target.dataset.block === drag.id) return
+    if (!target || !root.contains(target) || target.dataset.block === drag.id) {
+      setBlockDrag((prev) => (prev && prev.hint ? { ...prev, hint: null } : prev))
+      return
+    }
     const rect = target.getBoundingClientRect()
     const before = event.clientY < rect.top + rect.height / 2
     target.classList.add(before ? 'nl--drop-before' : 'nl--drop-after')
+    const targetId = target.dataset.sortableId
+    if (targetId) {
+      setBlockDrag((prev) =>
+        prev
+          ? prev.hint?.id === targetId && prev.hint.before === before
+            ? prev
+            : { ...prev, hint: { id: targetId, before } }
+          : prev
+      )
+    }
   }
 
   const onBlockDrop = (event: React.DragEvent<HTMLDivElement>): void => {
@@ -1657,20 +1807,22 @@ function NoteEditor({
     if (!line || !root.contains(line)) return
     const id = line.dataset.block ?? ''
     if ((root.dataset.hoverBlock ?? '') === id) return
-    if (id) root.dataset.hoverBlock = id
+    const rows = id ? getLines(root).filter((el) => el.dataset.block === id) : []
+    const hover = !!id && rows.some(lineHasContent)
+    if (hover) root.dataset.hoverBlock = id
     else delete root.dataset.hoverBlock
     getLines(root).forEach((el) => {
-      el.classList.toggle(
-        'ne-block-hover',
-        !!id && el.dataset.block === id && el.classList.contains('nl--block-first')
-      )
+      el.classList.toggle('ne-block-hover', hover && el.dataset.block === id)
     })
+    if (hover) positionBlockHighlight(root, id)
+    else clearBlockHighlight(root)
   }
 
   const clearHoveredBlock = (): void => {
     const root = rootRef.current
     if (!root || !root.dataset.hoverBlock) return
     delete root.dataset.hoverBlock
+    clearBlockHighlight(root)
     root
       .querySelectorAll<HTMLElement>('.ne-block-hover')
       .forEach((el) => el.classList.remove('ne-block-hover'))
@@ -1987,6 +2139,18 @@ function NoteEditor({
     refreshSlash()
   }
 
+  const handleCopy = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    const root = rootRef.current
+    const sel = window.getSelection()
+    if (!root || !sel || sel.isCollapsed || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0)
+    if (!root.contains(range.commonAncestorContainer)) return
+    const markdown = copySelectionMarkdown(root, range)
+    if (markdown === null) return
+    event.clipboardData.setData('text/plain', markdown)
+    event.preventDefault()
+  }
+
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
     event.preventDefault()
     const text = event.clipboardData.getData('text/plain')
@@ -2103,11 +2267,18 @@ function NoteEditor({
     return false
   }
 
+  useSortableMakeSpace({
+    rootRef,
+    activeId: blockDrag?.id ?? null,
+    hints: blockDrag?.hint ? [blockDrag.hint] : []
+  })
+
   return (
     <>
       <div
         ref={rootRef}
         className="blocks note-editor"
+        data-sortable-list
         contentEditable
         suppressContentEditableWarning
         spellCheck={false}
@@ -2165,6 +2336,7 @@ function NoteEditor({
             event.preventDefault()
           }
         }}
+        onCopy={handleCopy}
         onPaste={handlePaste}
         onBlur={() => {
           commit(false)

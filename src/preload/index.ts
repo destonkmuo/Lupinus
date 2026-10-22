@@ -53,6 +53,10 @@ const api = {
   setOrbEnabled: (enabled: boolean): void => {
     ipcRenderer.send('orb:set-enabled', enabled)
   },
+  /** macOS: hide the native traffic lights while the sidebar is collapsed. */
+  setSidebarCollapsed: (collapsed: boolean): void => {
+    ipcRenderer.send('window:sidebar-collapsed', collapsed)
+  },
   vault,
   speak: (text: string): Promise<boolean> => ipcRenderer.invoke('voice:speak', text),
   importAlarmSound: (): Promise<{ name: string; url: string } | null> =>

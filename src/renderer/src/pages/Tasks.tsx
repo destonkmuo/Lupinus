@@ -298,6 +298,7 @@ function Tasks(): React.JSX.Element {
   const addRoutine = useAppStore((state) => state.addRoutine)
   const ensureRoutinesToday = useAppStore((state) => state.ensureRoutinesToday)
   const clearCompletedTasks = useAppStore((state) => state.clearCompletedTasks)
+  const taskFilter = useAppStore((state) => state.taskFilter)
   const [dialog, setDialog] = useState<PlannerDialogTarget | null>(null)
   const [expandedRoutines, setExpandedRoutines] = useState<Set<string>>(new Set())
 
@@ -309,14 +310,26 @@ function Tasks(): React.JSX.Element {
   const today = todayISO()
   const tomorrow = addDays(today, 1)
 
-  const open = tasks.filter((t) => !isTaskDone(t))
+  const openTasks = tasks.filter((t) => !isTaskDone(t))
+  const allDone = tasks.filter((t) => isTaskDone(t))
+  const open =
+    taskFilter === 'today'
+      ? openTasks.filter((t) => t.due === today)
+      : taskFilter === 'overdue'
+        ? openTasks.filter((t) => t.due !== null && t.due < today)
+        : taskFilter === 'completed'
+          ? []
+          : openTasks
   const overdue = open.filter((t) => t.due !== null && t.due < today)
   // Chronological timeline: dated tasks first by due date + time.
   const dated = open
     .filter((t) => t.due !== null && t.due >= today)
     .sort((a, b) => ((a.due ?? '') + (a.time ?? '') < (b.due ?? '') + (b.time ?? '') ? -1 : 1))
   const general = open.filter((t) => t.due === null).sort((a, b) => b.updatedAt - a.updatedAt)
-  const done = tasks.filter((t) => isTaskDone(t)).sort((a, b) => b.updatedAt - a.updatedAt)
+  const done =
+    taskFilter === 'all' || taskFilter === 'completed'
+      ? [...allDone].sort((a, b) => b.updatedAt - a.updatedAt)
+      : []
 
   // Preserve chronological order while grouping dated tasks by day.
   const dayGroups: { due: string; items: TaskItem[] }[] = []
