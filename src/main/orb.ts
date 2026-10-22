@@ -274,6 +274,13 @@ function createOrb(): void {
     win.showInactive()
     orbCreatedAt = Date.now()
     fadeIn(win)
+    // Showing the orb can make macOS fall back to the bundle icon. The dev
+    // bundle is branded now, but re-assert SeeMO's runtime icon as well; the
+    // activation-policy update can land a beat after showInactive().
+    if (process.platform === 'darwin') {
+      applyDockIcon()
+      setTimeout(applyDockIcon, 150)
+    }
   }
   // 'ready-to-show' fires once the first frame is painted — the seamless
   // moment. The timeout is a safety net for transparent windows.
