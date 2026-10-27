@@ -10,7 +10,7 @@ import icon from '../../resources/icon.png?asset'
  *
  * Lifecycle contract — one rule, derived in `syncOrb()`:
  *
- *   orb visible  ⇔  setting enabled  ∧  the user is away from SeeMO
+ *   orb visible  ⇔  setting enabled  ∧  the user is away from Lupinus
  *                   (main window minimized/hidden, or simply not focused)
  *
  * Every window event funnels through `syncOrb()`, so no ad-hoc handler can
@@ -19,11 +19,19 @@ import icon from '../../resources/icon.png?asset'
  *
  * Activation safety has two layers, because an orb that follows you onto
  * every Space can otherwise drag the app forward:
- *   1. the orb is shown with `showInactive()` — it never activates SeeMO;
+ *   1. the orb is shown with `showInactive()` — it never activates Lupinus;
  *   2. `activate` ignores pulses within a short window of the orb appearing
  *      (the create→activate feedback loop), so real dock/Cmd+Tab intent
  *      still restores the app while the feedback path cannot.
  */
+
+/**
+ * Feature flag. The PiP orb is temporarily switched off: the window is never
+ * created regardless of the saved preference, but everything else stays in
+ * place (settings toggle, OrbView, IPC) so it can be turned back on by
+ * flipping this to `true`.
+ */
+const ORB_FEATURE_ENABLED = false
 
 const ORB_SIZE = 176
 const ORB_MARGIN = 24
@@ -89,7 +97,7 @@ function mainNeedsOrb(): boolean {
 
 /** The single reconcile point: make reality match the contract. */
 function syncOrb(): void {
-  const shouldShow = orbEnabled && mainShown && mainNeedsOrb()
+  const shouldShow = ORB_FEATURE_ENABLED && orbEnabled && mainShown && mainNeedsOrb()
   if (shouldShow) {
     if (!orbWindow || orbWindow.isDestroyed()) createOrb()
     return
@@ -118,7 +126,7 @@ export function trackMainWindow(win: BrowserWindow): void {
     hasFocusedOnce = true
     userAway = false
     // Coming back to the app is a common point for macOS to have swapped the
-    // Dock icon back to Electron's; re-assert SeeMO's.
+    // Dock icon back to Electron's; re-assert Lupinus's.
     applyDockIcon()
     resync()
   })
@@ -143,7 +151,7 @@ export function trackMainWindow(win: BrowserWindow): void {
 /**
  * Dock click / Cmd+Tab. Returns true when handled (a main window exists).
  * The orb appearing does not go through here (it's shown inactive), so this
- * path is reserved for genuine user intent to bring SeeMO back.
+ * path is reserved for genuine user intent to bring Lupinus back.
  */
 export function handleActivate(): boolean {
   const main = mainWindow
@@ -211,11 +219,11 @@ function fadeIn(win: BrowserWindow): void {
 }
 
 function createOrb(): void {
-  if (!orbEnabled) return
+  if (!ORB_FEATURE_ENABLED || !orbEnabled) return
   const win = new BrowserWindow({
     width: ORB_SIZE,
     height: ORB_SIZE,
-    // Same SeeMO icon as the main window / macOS Dock (matters on
+    // Same Lupinus icon as the main window / macOS Dock (matters on
     // Linux/Windows taskbars; ignored on macOS where the Dock is app-wide).
     icon,
     // The look: transparent frameless stage; the renderer paints the orb.
@@ -260,7 +268,7 @@ function createOrb(): void {
   }
   // Keep the Dock icon while the orb is the app's only visible window:
   // showing a non-activating window can otherwise flip macOS to an
-  // accessory activation policy, which hides SeeMO from the Dock. Changing
+  // accessory activation policy, which hides Lupinus from the Dock. Changing
   // the policy also drops any custom icon, so re-assert it right after.
   if (process.platform === 'darwin') app.setActivationPolicy('regular')
   applyDockIcon()
@@ -269,13 +277,13 @@ function createOrb(): void {
   const reveal = (): void => {
     if (revealed || win.isDestroyed()) return
     revealed = true
-    // showInactive: visible everywhere without ever activating SeeMO, so the
+    // showInactive: visible everywhere without ever activating Lupinus, so the
     // orb can't drag the main window forward with it.
     win.showInactive()
     orbCreatedAt = Date.now()
     fadeIn(win)
     // Showing the orb can make macOS fall back to the bundle icon. The dev
-    // bundle is branded now, but re-assert SeeMO's runtime icon as well; the
+    // bundle is branded now, but re-assert Lupinus's runtime icon as well; the
     // activation-policy update can land a beat after showInactive().
     if (process.platform === 'darwin') {
       applyDockIcon()

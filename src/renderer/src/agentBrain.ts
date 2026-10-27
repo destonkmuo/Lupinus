@@ -1,7 +1,7 @@
 import { useAppStore } from './store/appStore'
 
 /**
- * Shared SeeMO reply engine. Extracted from the SeeMO page so voice
+ * Shared Lupinus reply engine. Extracted from the Lupinus page so voice
  * transcripts can trigger the exact same working -> speaking flow while the
  * user is elsewhere in the app (background listening).
  *

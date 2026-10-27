@@ -63,7 +63,7 @@ interface Capability {
 const CAPABILITIES: Capability[] = [
   {
     key: 'agent',
-    title: 'SeeMO Agent',
+    title: 'Lupinus Agent',
     body: 'Talk or type — wake word, voice replies, and chat with memory.',
     color: '#b284ff',
     icon: AgentIcon
@@ -491,7 +491,7 @@ function Home(): React.JSX.Element {
       </header>
 
       <div className="home__inner">
-        <Reveal label="What SeeMO can do">
+        <Reveal label="What Lupinus can do">
           <h2 className="home__section-title">Explore</h2>
           <div className="home__grid">
             {CAPABILITIES.map((cap) => {

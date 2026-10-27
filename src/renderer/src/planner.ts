@@ -50,7 +50,7 @@ export interface TaskItem {
 export const LOCAL_CALENDAR_ID = 'local'
 
 /** Default display name for the local calendar. */
-export const LOCAL_CALENDAR_NAME = 'SeeMO'
+export const LOCAL_CALENDAR_NAME = 'Lupinus'
 
 export interface CalendarItem {
   id: string

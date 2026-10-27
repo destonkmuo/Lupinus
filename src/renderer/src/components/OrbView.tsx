@@ -100,8 +100,8 @@ function OrbView(): React.JSX.Element {
       className="orb"
       role="button"
       tabIndex={0}
-      title="Open SeeMO"
-      aria-label="SeeMO is here — activate to open the app"
+      title="Open Lupinus"
+      aria-label="Lupinus is here — activate to open the app"
       onMouseDown={(event) => {
         downPos.current = { x: event.clientX, y: event.clientY }
       }}

@@ -7,12 +7,14 @@ import { getVaultRoot } from './vault'
  * Note pictures.
  *
  * Web pictures (`https://…`) render directly. Local files are copied into
- * `<vault>/images/` and served back through the privileged `seemo-media://`
+ * `<vault>/images/` and served back through the privileged `lupinus-media://`
  * scheme, so notes keep working offline and `.md` files stay portable
  * (vault-relative `images/…` paths, resolved at render time).
  */
 
-const SCHEME = 'seemo-media'
+const SCHEME = 'lupinus-media'
+// Notes written before the rebrand still point at the old scheme.
+const LEGACY_SCHEME = 'seemo-media'
 const DIR = 'images'
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -46,30 +48,32 @@ function resolveImageFile(root: string, name: string): string {
 
 /** Must run before `app.whenReady()` so the scheme is privileged. */
 export function registerMediaScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: SCHEME,
+  protocol.registerSchemesAsPrivileged(
+    [SCHEME, LEGACY_SCHEME].map((scheme) => ({
+      scheme,
       privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
-    }
-  ])
+    }))
+  )
 }
 
-/** Serve `<vault>/images/<file>` at `seemo-media://images/<file>`. */
+/** Serve `<vault>/images/<file>` at `lupinus-media://images/<file>`. */
 function handleMediaRequests(): void {
-  protocol.handle(SCHEME, async (request) => {
-    try {
-      const url = new URL(request.url)
-      // basename() drops any traversal attempt; only flat names are served.
-      const name = basename(decodeURIComponent(url.pathname))
-      if (!name) return new Response('Not found', { status: 404 })
-      const mime = MIME_BY_EXT[extname(name).toLowerCase()]
-      if (!mime) return new Response('Unsupported type', { status: 415 })
-      const data = await fs.readFile(resolveImageFile(await getVaultRoot(), name))
-      return new Response(data, { headers: { 'content-type': mime } })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-  })
+  for (const scheme of [SCHEME, LEGACY_SCHEME]) {
+    protocol.handle(scheme, async (request) => {
+      try {
+        const url = new URL(request.url)
+        // basename() drops any traversal attempt; only flat names are served.
+        const name = basename(decodeURIComponent(url.pathname))
+        if (!name) return new Response('Not found', { status: 404 })
+        const mime = MIME_BY_EXT[extname(name).toLowerCase()]
+        if (!mime) return new Response('Unsupported type', { status: 415 })
+        const data = await fs.readFile(resolveImageFile(await getVaultRoot(), name))
+        return new Response(data, { headers: { 'content-type': mime } })
+      } catch {
+        return new Response('Not found', { status: 404 })
+      }
+    })
+  }
 }
 
 export function registerMediaHandlers(): void {

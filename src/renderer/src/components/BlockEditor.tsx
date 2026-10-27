@@ -12,7 +12,7 @@ import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 export type { ChildKind } from '../slash'
 
 /** Native DnD payload marking a drag as a block reorder (not a picture). */
-const BLOCK_MIME = 'application/x-seemo-block'
+const BLOCK_MIME = 'application/x-lupinus-block'
 
 /** Selection-formatting actions (static: mapped in render, never rebuilt). */
 const FORMAT_ITEMS: readonly { label: string; key: string; before: string; after: string }[] = [

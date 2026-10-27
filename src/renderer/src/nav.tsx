@@ -44,7 +44,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: 'tasks', label: 'Tasks', icon: TaskIcon },
   { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
   { key: 'email', label: 'Email', icon: MailIcon },
-  { key: 'agent', label: 'SeeMO', icon: AgentIcon },
+  { key: 'agent', label: 'Lupinus', icon: AgentIcon },
   { key: 'misc', label: 'Misc', icon: MoreIcon },
   { key: 'settings', label: 'Settings', icon: SettingsIcon }
 ]
@@ -60,7 +60,7 @@ export const NAV_LABELS = Object.fromEntries(
 
 /**
  * Every nav page now renders as a dedicated full-size, tab-free view (like
- * Home and SeeMO) rather than floating above the notes. Kept as a helper so
+ * Home and Lupinus) rather than floating above the notes. Kept as a helper so
  * the layout code has one place to reason about inline vs. tabbed notes.
  */
 export function isInlineNav(key: NavKey | null): key is NavKey {

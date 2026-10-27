@@ -1,9 +1,9 @@
 {
-  "name": "seemo",
+  "name": "lupinus",
   "version": "1.0.0",
-  "description": "An Electron application with React and TypeScript",
+  "description": "Lupinus — local-first notes, tasks, and assistant",
   "main": "./out/main/index.js",
-  "author": "example.com",
+  "author": "Lupinus",
   "homepage": "https://electron-vite.org",
   "scripts": {
     "format": "prettier --write .",

@@ -1,4 +1,4 @@
-# SeeMO
+# Lupinus
 
 A desktop notes app built with Electron, React, and TypeScript. Notes live as
 plain Markdown files in a local vault, with tabs, dockable images, tasks, a
@@ -22,7 +22,7 @@ calendar, and a voice-driven assistant.
 - **Light, dark, and system-synced themes** — switch in Settings.
 - **Voice assistant** — push-to-talk orb with transcripts, TTS replies, and an
   agentic core that can read and edit your notes.
-- **Local-first vault** — everything is stored under `~/Documents/SeeMO` as
+- **Local-first vault** — everything is stored under `~/Documents/Lupinus` as
   `.md` + `.json`, with optional GitHub sync.
 
 ## Shortcuts

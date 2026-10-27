@@ -5,7 +5,7 @@
 // Dev runs inside node_modules/electron/dist/Electron.app, and macOS takes the
 // Dock hover label from that bundle's directory (plus its Info.plist), before
 // any app JavaScript runs. `app.setName()` cannot change it. Rename the bundle,
-// patch its display name, and swap its icon so dev shows SeeMO like a packaged
+// patch its display name, and swap its icon so dev shows Lupinus like a packaged
 // build does.
 
 import { execFileSync } from 'node:child_process'
@@ -164,7 +164,7 @@ if (existsSync(sourceIcon)) {
       } catch {
         // Best effort; the next launch usually refreshes it anyway.
       }
-      console.log('[brand-dev-electron] Replaced the dev bundle icon with SeeMO.')
+      console.log('[brand-dev-electron] Replaced the dev bundle icon with Lupinus.')
     }
   } catch (error) {
     warn(`Could not replace the dev bundle icon: ${error.message}`)

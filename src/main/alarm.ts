@@ -7,13 +7,15 @@ import { basename, join } from 'path'
  * Custom alarm sounds.
  *
  * Chosen files are copied into `<userData>/alarm-sounds` and served back to
- * the renderer through the privileged `seemo-alarm://` scheme. Streaming from
+ * the renderer through the privileged `lupinus-alarm://` scheme. Streaming from
  * disk (rather than inlining base64) keeps arbitrary-length audio working and
  * means the store only ever holds a short URL — a multi-megabyte data URL in
  * the persisted store would bloat localStorage and slow every state write.
  */
 
-const SCHEME = 'seemo-alarm'
+const SCHEME = 'lupinus-alarm'
+// Alarm URLs saved before the rebrand still use the old scheme.
+const LEGACY_SCHEME = 'seemo-alarm'
 const HOST = 'sounds'
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -33,31 +35,33 @@ function soundsDir(): string {
 
 /** Must run before `app.whenReady()` so the scheme is privileged. */
 export function registerAlarmScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: SCHEME,
+  protocol.registerSchemesAsPrivileged(
+    [SCHEME, LEGACY_SCHEME].map((scheme) => ({
+      scheme,
       privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
-    }
-  ])
+    }))
+  )
 }
 
-/** Serve `<userData>/alarm-sounds/<file>` at `seemo-alarm://sounds/<file>`. */
+/** Serve `<userData>/alarm-sounds/<file>` at `lupinus-alarm://sounds/<file>`. */
 function handleAlarmRequests(): void {
-  protocol.handle(SCHEME, async (request) => {
-    try {
-      const url = new URL(request.url)
-      // basename() drops any traversal attempt; only flat names are served.
-      const name = basename(decodeURIComponent(url.pathname))
-      if (!name) return new Response('Not found', { status: 404 })
-      const dot = name.lastIndexOf('.')
-      const mime = dot >= 0 ? MIME_BY_EXT[name.slice(dot).toLowerCase()] : undefined
-      if (!mime) return new Response('Unsupported type', { status: 415 })
-      const data = await fs.readFile(join(soundsDir(), name))
-      return new Response(data, { headers: { 'content-type': mime } })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-  })
+  for (const scheme of [SCHEME, LEGACY_SCHEME]) {
+    protocol.handle(scheme, async (request) => {
+      try {
+        const url = new URL(request.url)
+        // basename() drops any traversal attempt; only flat names are served.
+        const name = basename(decodeURIComponent(url.pathname))
+        if (!name) return new Response('Not found', { status: 404 })
+        const dot = name.lastIndexOf('.')
+        const mime = dot >= 0 ? MIME_BY_EXT[name.slice(dot).toLowerCase()] : undefined
+        if (!mime) return new Response('Unsupported type', { status: 415 })
+        const data = await fs.readFile(join(soundsDir(), name))
+        return new Response(data, { headers: { 'content-type': mime } })
+      } catch {
+        return new Response('Not found', { status: 404 })
+      }
+    })
+  }
 }
 
 export function registerAlarmHandlers(): void {

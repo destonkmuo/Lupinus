@@ -108,7 +108,7 @@ async function setLinuxVolume(volume: number, muted: boolean): Promise<void> {
 const WINDOWS_AUDIO_CS = `
 using System;
 using System.Runtime.InteropServices;
-public static class SeeMoSysVol {
+public static class LupinusSysVol {
   [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
   private class MMDeviceEnumerator { }
   [Guid("A95664D2-9614-4F35-A746-DE8DB636B87A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -164,8 +164,8 @@ public static class SeeMoSysVol {
 async function runWindowsAudio(method: 'Get' | 'Set', level = 1, mute = false): Promise<string> {
   const call =
     method === 'Get'
-      ? '[SeeMoSysVol]::Get()'
-      : `[SeeMoSysVol]::Set(${level}, $${mute ? 'true' : 'false'})`
+      ? '[LupinusSysVol]::Get()'
+      : `[LupinusSysVol]::Set(${level}, $${mute ? 'true' : 'false'})`
   const script = `${WINDOWS_AUDIO_CS}\n${call}`
   const { stdout } = await run(
     'powershell',

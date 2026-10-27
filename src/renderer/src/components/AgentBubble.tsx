@@ -3,10 +3,10 @@ import { useAppStore } from '../store/appStore'
 import { XIcon } from './icons'
 
 /**
- * Floating SeeMO reply card, pinned to the bottom-right of the screen.
+ * Floating Lupinus reply card, pinned to the bottom-right of the screen.
  * Appears when a fresh response arrives while the user is anywhere but the
- * SeeMO page — including prompts sent from Spotlight, which deliberately do
- * not navigate away. Dismissing or opening the SeeMO page marks it seen so it
+ * Lupinus page — including prompts sent from Spotlight, which deliberately do
+ * not navigate away. Dismissing or opening the Lupinus page marks it seen so it
  * never nags about old messages.
  */
 function AgentBubble(): React.JSX.Element | null {
@@ -33,7 +33,7 @@ function AgentBubble(): React.JSX.Element | null {
   return (
     <aside className="agent-bubble" aria-live="polite" aria-label="Agent response">
       <div className="agent-bubble__head">
-        <span className="agent-bubble__title">SeeMO</span>
+        <span className="agent-bubble__title">Lupinus</span>
         <button
           type="button"
           className="chat__clear"
@@ -53,7 +53,7 @@ function AgentBubble(): React.JSX.Element | null {
           openNav('agent')
         }}
       >
-        Open SeeMO
+        Open Lupinus
       </button>
     </aside>
   )

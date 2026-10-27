@@ -155,7 +155,7 @@ export async function createRepo(
   }
 
   await ensureIdentity(root)
-  await commitAll(root, 'Back up SeeMO notes')
+  await commitAll(root, 'Back up Lupinus notes')
 
   if (!(await getRemote(root))) {
     await run(

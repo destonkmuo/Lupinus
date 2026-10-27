@@ -7,7 +7,7 @@
  * parent's `## Hidden` footer only keeps a `[[Child Title]]` link. Hidden is
  * never rendered — it only exists in the file so the tree nests.
  *
- * SeeMO will flesh out generation later; for now every collection is manually
+ * Lupinus will flesh out generation later; for now every collection is manually
  * editable key by key (term/definition, node label, …) through the same UI.
  */
 

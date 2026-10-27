@@ -106,9 +106,9 @@ function Agent(): React.JSX.Element {
         </div>
       </div>
 
-      <section className="agent__chat" aria-label="SeeMO chat">
+      <section className="agent__chat" aria-label="Lupinus chat">
         <header className="chat__header">
-          <span className="chat__title">SeeMO</span>
+          <span className="chat__title">Lupinus</span>
           <span className="chat__tag">Local preview</span>
           <span className="chat__state">
             <span className={`chat__dot chat__dot--${coreState}`} />
@@ -149,7 +149,7 @@ function Agent(): React.JSX.Element {
           {messages.length === 0 && !pendingReply ? (
             <div className="msg msg--agent">
               <div className="msg__bubble">
-                Hey — I&apos;m SeeMO. Type below, or just speak and your words will land here.
+                Hey — I&apos;m Lupinus. Type below, or just speak and your words will land here.
               </div>
             </div>
           ) : (
@@ -175,7 +175,7 @@ function Agent(): React.JSX.Element {
             className="chat__input"
             rows={1}
             value={draft}
-            placeholder="Message SeeMO…"
+            placeholder="Message Lupinus…"
             spellCheck={false}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {

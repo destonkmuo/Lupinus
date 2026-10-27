@@ -3,7 +3,7 @@ import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
 /**
- * Keep SeeMO's Dock icon applied on macOS.
+ * Keep Lupinus's Dock icon applied on macOS.
  *
  * Packaged builds carry `build/icon.icns`, and the dev prelaunch script brands
  * the local Electron bundle with the same icon. macOS can still drop a custom

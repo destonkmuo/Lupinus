@@ -1205,7 +1205,7 @@ export function QuizChildView({ noteId }: { noteId: string }): React.JSX.Element
     <div className="quiz__blank" role="status">
       <p className="quiz__blank-title">Quiz runner coming soon</p>
       <p className="study__muted">
-        Blank shell linked as a child of its page. SeeMO will add question types, attempts, and
+        Blank shell linked as a child of its page. Lupinus will add question types, attempts, and
         grading here — the JSON shape stays <code>{'{"type":"quiz","questions":[]}'}</code>.
       </p>
       <ul className="quiz__todo">

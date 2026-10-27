@@ -1,10 +1,11 @@
 import type { VaultFileInfo } from '../preload/vault'
 import { app, dialog, ipcMain, shell } from 'electron'
-import { promises as fs } from 'fs'
+import { promises as fs, existsSync, renameSync } from 'fs'
 import { basename, join, resolve, sep } from 'path'
 
 const CONFIG_FILE = 'vault.json'
-const DEFAULT_VAULT_DIR = 'SeeMO'
+const DEFAULT_VAULT_DIR = 'Lupinus'
+const LEGACY_VAULT_DIR = 'SeeMO'
 
 function userDataDir(): string {
   return app.getPath('userData')
@@ -35,7 +36,20 @@ async function writeConfiguredRoot(root: string): Promise<void> {
 
 function defaultRoot(): string {
   try {
-    return join(app.getPath('documents'), DEFAULT_VAULT_DIR)
+    const documents = app.getPath('documents')
+    const root = join(documents, DEFAULT_VAULT_DIR)
+    // Preserve a default vault from before the rebrand on first launch.
+    if (!existsSync(root)) {
+      const legacy = join(documents, LEGACY_VAULT_DIR)
+      if (existsSync(legacy)) {
+        try {
+          renameSync(legacy, root)
+        } catch {
+          // Permission denied: fall through to a fresh default folder.
+        }
+      }
+    }
+    return root
   } catch {
     return join(userDataDir(), 'notes-vault')
   }

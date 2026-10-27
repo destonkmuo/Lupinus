@@ -84,7 +84,7 @@ body {
 /* Full-size nav views have no tab bar, so they get an invisible title-bar
    strip. macOS only: elsewhere the native window frame already provides one.
    The strip is short enough to clear every page's header (Calendar and the
-   SeeMO chat header pad down past it). */
+   Lupinus chat header pad down past it). */
 .navshell {
   position: relative;
   display: flex;
@@ -2403,7 +2403,7 @@ button.sidebar__section-title:hover {
   animation: core-switch-pop 320ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* The status dot is a button that opens the SeeMO page: strip native button
+/* The status dot is a button that opens the Lupinus page: strip native button
    dressing so only the dot itself paints, and signal clickability. */
 button.sidebar__status {
   border: none;
@@ -3874,7 +3874,7 @@ button.note__crumb:hover {
   color: var(--ev-c-text-3);
 }
 
-/* Full-size view (like Home and SeeMO): the canvas runs edge-to-edge with no
+/* Full-size view (like Home and Lupinus): the canvas runs edge-to-edge with no
    inset card border, so the whole content area is draggable/pannable. */
 .graph__wrap {
   position: relative;
@@ -4307,6 +4307,11 @@ button.note__crumb:hover {
   accent-color: var(--accent);
 }
 
+.settings__check:has(input:disabled) {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* Sidebar widget editor: visibility checkboxes plus a compact reorder rail. */
 .settings__widgets {
   display: flex;
@@ -4634,7 +4639,7 @@ body.is-orb {
   gap: 10px;
 }
 
-/* Mute controls overlaid on the bottom of SeeMO's model — absolutely
+/* Mute controls overlaid on the bottom of Lupinus's model — absolutely
    positioned so they take zero layout space and never push the status
    pills down. */
 .agent__mutes {

@@ -47,7 +47,7 @@ export function AgentIcon(props: IconProps): React.JSX.Element {
   )
 }
 
-/** Chat / SeeMO conversation bubble. */
+/** Chat / Lupinus conversation bubble. */
 export function ChatIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>

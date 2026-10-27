@@ -115,7 +115,7 @@ async function biometricAvailable(): Promise<boolean> {
 async function biometricVerify(): Promise<boolean> {
   if (process.platform === 'darwin') {
     try {
-      await systemPreferences.promptTouchID('Unlock SeeMO')
+      await systemPreferences.promptTouchID('Unlock Lupinus')
       return true
     } catch {
       return false
@@ -135,7 +135,7 @@ async function biometricVerify(): Promise<boolean> {
       }
       const { UserConsentVerifier } = hello
       const result: number = await new Promise((resolve, reject) => {
-        UserConsentVerifier.requestVerificationAsync('Unlock SeeMO', (error, res) => {
+        UserConsentVerifier.requestVerificationAsync('Unlock Lupinus', (error, res) => {
           if (error) reject(error)
           else resolve(res)
         })

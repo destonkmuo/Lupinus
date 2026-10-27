@@ -9,7 +9,7 @@ import { AgentIcon, CommandIcon, FileTextIcon, SearchIcon, TaskIcon } from './ic
 
 /**
  * A query this long with zero matches is almost certainly a question for
- * SeeMO rather than a search, so the assistant is offered automatically.
+ * Lupinus rather than a search, so the assistant is offered automatically.
  */
 const LONG_QUERY_CHARS = 12
 
@@ -49,7 +49,7 @@ type Result =
   | { kind: 'task'; id: string; title: string; lines: string[] }
   | { kind: 'nav'; id: string; title: string; lines: string[] }
   | { kind: 'command'; id: string; title: string; lines: string[] }
-  /** A prompt to send to SeeMO instead of a search hit. */
+  /** A prompt to send to Lupinus instead of a search hit. */
   | { kind: 'prompt'; id: string; title: string; lines: string[] }
 
 interface Command {
@@ -169,10 +169,10 @@ function Spotlight(): React.JSX.Element | null {
   const results = useMemo((): Result[] => {
     const live = notes.filter((n) => !n.deletedAt)
     const raw = query.trim()
-    // `@` turns the box into a direct prompt to SeeMO (search is bypassed).
+    // `@` turns the box into a direct prompt to Lupinus (search is bypassed).
     if (raw.startsWith('@')) {
       const prompt = raw.slice(1).trim()
-      return prompt ? [{ kind: 'prompt', id: 'ask', title: prompt, lines: ['Ask SeeMO'] }] : []
+      return prompt ? [{ kind: 'prompt', id: 'ask', title: prompt, lines: ['Ask Lupinus'] }] : []
     }
     const needle = raw.toLowerCase()
     if (!needle) {
@@ -258,7 +258,7 @@ function Spotlight(): React.JSX.Element | null {
     }
     // Nothing matched a long query: offer the assistant as the default action.
     if (out.length === 0 && raw.length >= LONG_QUERY_CHARS) {
-      out.push({ kind: 'prompt', id: 'ask', title: raw, lines: ['Ask SeeMO'] })
+      out.push({ kind: 'prompt', id: 'ask', title: raw, lines: ['Ask Lupinus'] })
     }
     return out.slice(0, 30)
   }, [notes, tasks, query])
@@ -271,7 +271,7 @@ function Spotlight(): React.JSX.Element | null {
     const state = useAppStore.getState()
     setOpen(false)
     if (result.kind === 'prompt') {
-      // Same reply engine as the SeeMO page, but stay where the user is:
+      // Same reply engine as the Lupinus page, but stay where the user is:
       // the turn is logged and the answer surfaces in the floating bubble.
       state.addChatMessage('user', result.title)
       respondTo(result.title)
@@ -321,8 +321,8 @@ function Spotlight(): React.JSX.Element | null {
             className="spotlight__input"
             autoFocus
             value={query}
-            placeholder="Search, or ask SeeMO with @…"
-            aria-label="Search notes, tasks, pages, or ask SeeMO"
+            placeholder="Search, or ask Lupinus with @…"
+            aria-label="Search notes, tasks, pages, or ask Lupinus"
             onChange={(event) => {
               setQuery(event.target.value)
               setSelected(0)
@@ -369,7 +369,7 @@ function Spotlight(): React.JSX.Element | null {
                         query={result.kind === 'prompt' ? '' : query.trim()}
                       />
                       <span className="spotlight__kind">
-                        {result.kind === 'prompt' ? 'SeeMO' : result.kind}
+                        {result.kind === 'prompt' ? 'Lupinus' : result.kind}
                       </span>
                     </span>
                     {result.lines.map((line, lineIndex) => (
@@ -384,7 +384,7 @@ function Spotlight(): React.JSX.Element | null {
           })}
         </ul>
         <p className="spotlight__hint">
-          Enter runs · @ asks SeeMO · long queries ask automatically · Esc closes
+          Enter runs · @ asks Lupinus · long queries ask automatically · Esc closes
         </p>
       </div>
     </div>

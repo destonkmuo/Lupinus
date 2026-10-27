@@ -82,7 +82,7 @@ function SplitPaneHeader({
 /**
  * Sidebar pages (Tasks, Calendar, …) float above the current note tab in a
  * rounded window instead of replacing it — no tab clutter, and the note stays
- * put underneath. Home and SeeMO keep their dedicated full-size views (see
+ * put underneath. Home and Lupinus keep their dedicated full-size views (see
  * isInlineNav). Dismiss via the ✕ button, clicking the backdrop, or Esc.
  * Remounts per page so each window opens fresh. The calendar gets a wider
  * window for its grid.
@@ -366,7 +366,7 @@ function App(): React.JSX.Element {
     splitTabId !== null && splitTabId !== activeTabId
       ? (tabs.find((t) => t.id === splitTabId) ?? null)
       : null
-  // Home and SeeMO render as dedicated full-size views (tab-free). Other
+  // Home and Lupinus render as dedicated full-size views (tab-free). Other
   // pages float above the notes; with no note tabs open they render inline
   // instead so a fresh vault never shows a blank shell.
   const showFloat = activeNav !== null && !isInlineNav(activeNav) && activeTab !== null
@@ -512,7 +512,7 @@ function App(): React.JSX.Element {
       {/* Always mounted: collapsing animates width to zero via CSS. */}
       <Sidebar />
       <div className="app__main">
-        {/* Home and SeeMO own the full window: no tab bar while focused. */}
+        {/* Home and Lupinus own the full window: no tab bar while focused. */}
         {!isInlineNav(activeNav) && <TabBar />}
         <div
           ref={contentRef}

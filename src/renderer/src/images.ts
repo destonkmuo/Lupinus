@@ -3,12 +3,14 @@
  *
  * Web pictures (`https://…`) render directly. Vault-relative paths
  * (`images/pic.png`, as written by the picture importer) stream through the
- * privileged `seemo-media://` scheme, so notes keep working offline and the
+ * privileged `lupinus-media://` scheme, so notes keep working offline and the
  * `.md` files stay portable for other editors.
  */
 
 const SAFE_URL = /^(https?:\/\/|mailto:|#|\/)/i
 const KNOWN_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
+/** Picture URLs written before the rebrand still point at the old scheme. */
+const LEGACY_MEDIA_PREFIX = 'seemo-media://'
 
 /**
  * Resolve an image source for rendering. Returns undefined for anything
@@ -17,7 +19,9 @@ const KNOWN_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
 export function resolveImageSrc(raw: string): string | undefined {
   const trimmed = raw.trim()
   if (!trimmed) return undefined
-  if (trimmed.startsWith('seemo-media://')) return trimmed
+  if (trimmed.startsWith('lupinus-media://') || trimmed.startsWith(LEGACY_MEDIA_PREFIX)) {
+    return trimmed
+  }
   // Absolute filesystem paths must never reach an <img> tag.
   if (trimmed.startsWith('/')) return undefined
   if (SAFE_URL.test(trimmed)) return trimmed
@@ -25,7 +29,7 @@ export function resolveImageSrc(raw: string): string | undefined {
   if (trimmed.includes('\\')) return undefined
   const parts = trimmed.split('/')
   if (parts.some((part) => part === '' || part === '.' || part === '..')) return undefined
-  return `seemo-media://${parts.map(encodeURIComponent).join('/')}`
+  return `lupinus-media://${parts.map(encodeURIComponent).join('/')}`
 }
 
 /** Wrap alignment for a docked (unlocked) picture. */

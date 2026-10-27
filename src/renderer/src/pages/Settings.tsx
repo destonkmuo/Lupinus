@@ -2,13 +2,20 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAppStore, type SidebarWidgetKey } from '../store/appStore'
 import type { GithubStatus } from '../../../preload/github'
 
+/**
+ * Mirrors `ORB_FEATURE_ENABLED` in `src/main/orb.ts`. While false the orb
+ * window is never created and the toggle renders off + disabled; the saved
+ * preference stays in the store for when the feature comes back.
+ */
+const ORB_FEATURE_ENABLED = false
+
 function GithubBackup(): React.JSX.Element {
   const autoSync = useAppStore((state) => state.autoSync)
   const setAutoSync = useAppStore((state) => state.setAutoSync)
   const [status, setStatus] = useState<GithubStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const [repoName, setRepoName] = useState('seemo-notes')
+  const [repoName, setRepoName] = useState('lupinus-notes')
   const [isPrivate, setIsPrivate] = useState(true)
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
 
@@ -571,10 +578,10 @@ function Settings(): React.JSX.Element {
             Always listening
           </label>
           <p className="settings__note">
-            When on, the mic stays live everywhere: SeeMO answers what you say even away from the
-            SeeMO page, and its replies surface in a bubble at the bottom-right. When off, the mic
-            only works on the SeeMO page — anywhere else it&apos;s effectively turned off. The
-            microphone button in the sidebar toggles this same setting; the SeeMO page has its own
+            When on, the mic stays live everywhere: Lupinus answers what you say even away from the
+            Lupinus page, and its replies surface in a bubble at the bottom-right. When off, the mic
+            only works on the Lupinus page — anywhere else it&apos;s effectively turned off. The
+            microphone button in the sidebar toggles this same setting; the Lupinus page has its own
             independent mute.
           </p>
           <label className="settings__check">
@@ -592,14 +599,18 @@ function Settings(): React.JSX.Element {
           <label className="settings__check">
             <input
               type="checkbox"
-              checked={orbEnabled}
+              checked={ORB_FEATURE_ENABLED && orbEnabled}
+              disabled={!ORB_FEATURE_ENABLED}
               onChange={(event) => setOrbEnabled(event.target.checked)}
             />
             Picture-in-picture orb
           </label>
           <p className="settings__note">
-            When on, minimizing or hiding the app leaves SeeMO hovering in a small always-on-top
+            When on, minimizing or hiding the app leaves Lupinus hovering in a small always-on-top
             window. Click it to bring the app back.
+          </p>
+          <p className="settings__note">
+            <em>Temporarily unavailable — the orb is switched off for now.</em>
           </p>
         </section>
 
@@ -615,7 +626,7 @@ function Settings(): React.JSX.Element {
         <section className="settings__section">
           <h2 className="settings__section-title">About</h2>
           <p className="settings__note">
-            <strong>SeeMO</strong> — your notes, organized and always in motion.
+            <strong>Lupinus</strong> — your notes, organized and always in motion.
           </p>
         </section>
       </div>

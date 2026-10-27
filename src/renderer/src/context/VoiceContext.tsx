@@ -62,7 +62,7 @@ export function VoiceProvider({ children }: { children: ReactNode }): React.JSX.
     }
   }, [])
 
-  // The SeeMO page has its own independent mute: on the page (sidebar view)
+  // The Lupinus page has its own independent mute: on the page (sidebar view)
   // voice is live unless the page is muted. Off the page the mic is
   // effectively off unless Always listening is on. Anywhere voice isn't
   // live, input is ignored entirely: nothing in chat, no orb movement, no
@@ -94,10 +94,10 @@ export function VoiceProvider({ children }: { children: ReactNode }): React.JSX.
       // Drive the core animation from voice activity. getState() avoids
       // re-rendering this provider on every state change.
       setCoreState('working')
-      // Spoken commands also land in the SeeMO chat as user messages.
+      // Spoken commands also land in the Lupinus chat as user messages.
       addChatMessage('user', text)
       // Background listening: answer out loud in state + chat even when the
-      // SeeMO page isn't open. Same engine as typed messages, so the flow
+      // Lupinus page isn't open. Same engine as typed messages, so the flow
       // (and its supersede guards) stay identical.
       if (backgroundListening) respondTo(text)
       if (workingTimer.current) clearTimeout(workingTimer.current)

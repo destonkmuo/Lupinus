@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# SeeMO voice pipeline — one-command setup + launcher.
+# Lupinus voice pipeline — one-command setup + launcher.
 #
 # This script fully bootstraps the "whisper-only" pipeline so the user never
 # has to manually download or build anything:
@@ -167,7 +167,7 @@ found = None
 try:
     req = urllib.request.Request(
         API,
-        headers={"User-Agent": "SeeMO-setup", "Accept": "application/vnd.github+json"},
+        headers={"User-Agent": "Lupinus-setup", "Accept": "application/vnd.github+json"},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         releases = json.load(resp)

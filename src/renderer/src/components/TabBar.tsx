@@ -25,7 +25,7 @@ function TabBar(): React.JSX.Element {
   const tabs = useAppStore((state) => state.tabs)
   const activeTabId = useAppStore((state) => state.activeTabId)
   const activeNav = useAppStore((state) => state.activeNav)
-  // Home/SeeMO take over the content area, so no tab reads active under
+  // Home/Lupinus take over the content area, so no tab reads active under
   // them; floating windows leave the note underneath lit.
   const noteVisible = activeNav === null || !isInlineNav(activeNav)
   const notes = useAppStore((state) => state.notes)

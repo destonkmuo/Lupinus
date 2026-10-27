@@ -646,7 +646,7 @@ function ChatSidebar(): React.JSX.Element {
                 onClick={() => openNav('agent')}
               >
                 <span className="sidebar-context__meta">
-                  {message.role === 'user' ? 'You' : 'SeeMO'}
+                  {message.role === 'user' ? 'You' : 'Lupinus'}
                 </span>
                 <span className="sidebar-context__label">{message.text.trim() || '…'}</span>
               </button>
@@ -1055,7 +1055,7 @@ function Sidebar(): React.JSX.Element {
   }, [activeSpaceId, spaces.length])
 
   // The note row stays lit while its tab is visible: always in note view,
-  // and behind floating windows — but not under Home/SeeMO's full-size views.
+  // and behind floating windows — but not under Home/Lupinus's full-size views.
   const activeNoteId =
     activeTab?.kind === 'note' && (activeNav === null || !isInlineNav(activeNav))
       ? activeTab.noteId
@@ -2401,8 +2401,8 @@ function Sidebar(): React.JSX.Element {
             type="button"
             key={coreState}
             className={`sidebar__state sidebar__state--${coreState} sidebar__status sidebar__status--chrome`}
-            title={`Core: ${coreState} · open SeeMO`}
-            aria-label={`Core status: ${coreState} · open SeeMO`}
+            title={`Core: ${coreState} · open Lupinus`}
+            aria-label={`Core status: ${coreState} · open Lupinus`}
             onClick={() => useAppStore.getState().openNav('agent')}
           />
         </div>

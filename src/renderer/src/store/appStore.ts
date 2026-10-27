@@ -271,7 +271,7 @@ interface AppState {
   messages: ChatMessage[]
   autoSync: boolean
   backgroundListening: boolean
-  /** SeeMO-page-only mic mute. Independent from Always listening. */
+  /** Lupinus-page-only mic mute. Independent from Always listening. */
   agentMicMuted: boolean
   orbEnabled: boolean
   lastSeenAgentId: string | null
@@ -1096,6 +1096,26 @@ function saveCalendarsFile(subscriptions: CalendarSubscription[], set: PersistSe
     set({ plannerError: 'Could not save calendars.json.' })
   })
 }
+
+/** Persisted-store key (kept in one place for the one-time rename below). */
+const STORE_KEY = 'lupinus-store'
+const LEGACY_STORE_KEY = 'seemo-store'
+
+// Carry settings/notes over from the pre-rebrand key on first launch.
+function migrateLegacyStore(): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    if (localStorage.getItem(STORE_KEY)) return
+    const legacy = localStorage.getItem(LEGACY_STORE_KEY)
+    if (!legacy) return
+    localStorage.setItem(STORE_KEY, legacy)
+    localStorage.removeItem(LEGACY_STORE_KEY)
+  } catch {
+    // Storage unavailable or over quota; start fresh.
+  }
+}
+
+migrateLegacyStore()
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -2874,7 +2894,7 @@ export const useAppStore = create<AppState>()(
       }
     }),
     {
-      name: 'seemo-store',
+      name: STORE_KEY,
       // Only documents, open tabs, sidebar order and chat history persist.
       partialize: (state) => ({
         spaces: state.spaces,
@@ -3204,7 +3224,7 @@ export const useAppStore = create<AppState>()(
           }
         }
         // Never pop the bubble for history that predates this launch: seed
-        // "seen" at the newest restored SeeMO message.
+        // "seen" at the newest restored Lupinus message.
         let lastSeenAgentId = saved.lastSeenAgentId ?? null
         if (!lastSeenAgentId) {
           for (const message of messages) {

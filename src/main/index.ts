@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { cpSync, existsSync, readdirSync, renameSync, rmdirSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerAlarmHandlers, registerAlarmScheme } from './alarm'
@@ -15,6 +16,43 @@ import { registerVaultHandlers } from './vault'
 import { registerVolumeHandlers } from './volume'
 import icon from '../../resources/icon.png?asset'
 
+/**
+ * Move the pre-rebrand profile (settings, localStorage, alarm sounds, and
+ * vault.json) into the new userData folder on first launch. Chromium may have
+ * already created an empty folder for the new name, so an empty one is
+ * replaced; anything with real content is left untouched.
+ */
+function migrateLegacyUserData(): void {
+  try {
+    const appData = app.getPath('appData')
+    const current = app.getPath('userData')
+    const legacy = ['seemo', 'SeeMO']
+      .map((name) => join(appData, name))
+      .find((path) => path !== current && existsSync(path))
+    if (!legacy) return
+
+    if (!existsSync(current) || readdirSync(current).length === 0) {
+      if (existsSync(current)) rmdirSync(current)
+      renameSync(legacy, current)
+      return
+    }
+
+    // Chromium may have already seeded the new profile. Merge only when the
+    // app's own data hasn't been written yet, so nothing is overwritten.
+    if (existsSync(join(current, 'vault.json')) || existsSync(join(current, 'Local Storage'))) {
+      return
+    }
+    for (const entry of ['vault.json', 'alarm-sounds', 'Local Storage', 'Session Storage']) {
+      const from = join(legacy, entry)
+      if (existsSync(from)) cpSync(from, join(current, entry), { recursive: true })
+    }
+  } catch {
+    // Path lookup or permissions failed; continue with a fresh profile.
+  }
+}
+
+migrateLegacyUserData()
+
 // Alarm/timer sounds must be allowed to start from timer callbacks (no user
 // gesture at ring time), so disable the autoplay gate for this app window.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -30,7 +68,7 @@ registerMediaScheme()
 
 function createWindow(): void {
   // Create the browser window.
-  // Custom chrome: hide the native title bar (no more "SeeMO" strip up top).
+  // Custom chrome: hide the native title bar (no more "Lupinus" strip up top).
   // On macOS the traffic lights float over the sidebar, so the sidebar
   // search sits lower to clear them; elsewhere the OS frame stays as-is so
   // window controls are never lost.
@@ -85,7 +123,7 @@ function createWindow(): void {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.lupinus')
 
   // Dev runs on macOS execute inside Electron.app, whose own bundle icon
   // lands in the dock. Override it at runtime so dev shows the real icon
@@ -102,13 +140,13 @@ app.whenReady().then(() => {
   })
 
   // Any window gaining focus is a point macOS may have restored the bundle
-  // icon; keep SeeMO's in place.
+  // icon; keep Lupinus's in place.
   app.on('browser-window-focus', () => applyDockIcon())
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
 
-  // Renderer -> pipeline: speak a SeeMO reply aloud via Piper TTS.
+  // Renderer -> pipeline: speak a Lupinus reply aloud via Piper TTS.
   ipcMain.handle('voice:speak', (_event, text: unknown) =>
     speakResponse(typeof text === 'string' ? text : '')
   )
@@ -116,13 +154,13 @@ app.whenReady().then(() => {
   // Markdown vault: one .md file per note, readable outside the app.
   registerVaultHandlers()
 
-  // Custom alarm sounds: import picker + seemo-alarm:// streaming.
+  // Custom alarm sounds: import picker + lupinus-alarm:// streaming.
   registerAlarmHandlers()
 
   // Alarm "max volume" option: OS-level volume max/restore.
   registerVolumeHandlers()
 
-  // Note pictures: import picker + seemo-media:// streaming.
+  // Note pictures: import picker + lupinus-media:// streaming.
   registerMediaHandlers()
   registerPdfHandlers()
 

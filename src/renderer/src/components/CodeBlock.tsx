@@ -49,7 +49,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string }): React.JSX.El
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
       const data = event.data as { source?: unknown; id?: unknown; lines?: unknown } | null
-      if (!data || data.source !== 'seemo-run' || data.id !== runIdRef.current) return
+      if (!data || data.source !== 'lupinus-run' || data.id !== runIdRef.current) return
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current)
         timerRef.current = null
@@ -93,7 +93,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string }): React.JSX.El
     if (!armedRef.current) return
     armedRef.current = false
     iframeRef.current?.contentWindow?.postMessage(
-      { type: 'seemo-exec', id: runIdRef.current, code },
+      { type: 'lupinus-exec', id: runIdRef.current, code },
       '*'
     )
   }

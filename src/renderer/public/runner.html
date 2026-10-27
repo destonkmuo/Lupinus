@@ -24,7 +24,7 @@
         }
         window.addEventListener('message', function (e) {
           var d = e.data
-          if (!d || d.type !== 'seemo-exec' || typeof d.id !== 'number') return
+          if (!d || d.type !== 'lupinus-exec' || typeof d.id !== 'number') return
           var id = d.id
           var out = []
           function push(args) {
@@ -48,7 +48,7 @@
           } catch (err) {
             out.push(String(err && err.stack ? err.stack : err).split('\n')[0])
           }
-          parent.postMessage({ source: 'seemo-run', id: id, lines: out }, '*')
+          parent.postMessage({ source: 'lupinus-run', id: id, lines: out }, '*')
         })
       })()
     </script>

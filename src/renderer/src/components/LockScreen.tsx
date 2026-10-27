@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import seemoIcon from '../assets/seemo-icon.png'
+import lupinusIcon from '../assets/lupinus-icon.png'
 
 export interface LockInfo {
   biometricKind: 'touch-id' | 'windows-hello' | null
@@ -66,10 +66,10 @@ function LockScreen({
   const showBio = info.biometricEnabled && info.biometricAvailable && info.biometricKind !== null
 
   return (
-    <div className="lockscreen" role="dialog" aria-modal="true" aria-label="Unlock SeeMO">
+    <div className="lockscreen" role="dialog" aria-modal="true" aria-label="Unlock Lupinus">
       <div className="lockscreen__card">
-        <img className="lockscreen__orb" src={seemoIcon} alt="" aria-hidden="true" />
-        <h1 className="lockscreen__title">SeeMO is locked</h1>
+        <img className="lockscreen__orb" src={lupinusIcon} alt="" aria-hidden="true" />
+        <h1 className="lockscreen__title">Lupinus is locked</h1>
         <p className="lockscreen__hint">Enter your password to open the app.</p>
         <input
           type="password"

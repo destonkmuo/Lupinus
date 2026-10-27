@@ -31,7 +31,7 @@ import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 export type { ChildKind } from '../slash'
 
 /** Native DnD payload marking a drag as a block reorder (not a picture). */
-const BLOCK_MIME = 'application/x-seemo-note-block'
+const BLOCK_MIME = 'application/x-lupinus-note-block'
 
 type LineKind =
   'paragraph' | 'heading' | 'quote' | 'bullet' | 'ordered' | 'task' | 'rule' | 'code' | 'math'
