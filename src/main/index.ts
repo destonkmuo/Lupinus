@@ -10,6 +10,7 @@ import { registerLockHandlers } from './lock'
 import { registerChromeHandlers } from './chrome'
 import { handleActivate, registerOrbHandlers, trackMainWindow } from './orb'
 import { registerMediaHandlers, registerMediaScheme } from './media'
+import { registerPdfHandlers } from './pdf'
 import { registerVaultHandlers } from './vault'
 import { registerVolumeHandlers } from './volume'
 import icon from '../../resources/icon.png?asset'
@@ -123,6 +124,7 @@ app.whenReady().then(() => {
 
   // Note pictures: import picker + seemo-media:// streaming.
   registerMediaHandlers()
+  registerPdfHandlers()
 
   // Calendar subscriptions: fetch external ICS feeds for the renderer.
   registerCalendarHandlers()

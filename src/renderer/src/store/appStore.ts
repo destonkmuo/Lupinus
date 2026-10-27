@@ -5,6 +5,7 @@ import type { ImageSide } from '../images'
 import { noteFileBase, orderedNotes, titleFromFileName, uniqueFileName } from '../notes'
 import { renameLinkTarget } from '../subpages'
 import { parseIcs } from '../ical'
+import { isPdfVaultFile, parsePdfNote, pdfFileForNote, titleFromPdfFileName } from '../pdf'
 import {
   CALENDARS_FILE,
   CALENDAR_COLORS,
@@ -40,7 +41,7 @@ export interface Note {
   id: string
   title: string
   content: string
-  /** File inside the vault, e.g. `my-note.md`. Assigned on creation/import. */
+  /** File inside the vault: `my-note.md`, or `pdfs/name.pdf` for PDF notes. */
   fileName: string
   createdAt: number
   updatedAt: number
@@ -352,6 +353,7 @@ interface AppState {
   moveTab: (dragId: string, targetId: string | null, before: boolean) => void
   toggleTabPinned: (id: string) => void
   moveNote: (dragId: string, targetId: string | null, before: boolean) => void
+  moveNoteToSpace: (id: string, spaceId: string) => void
   createSection: (title?: string, spaceId?: string) => string
   createDivider: (container?: string, spaceId?: string) => string
   moveDivider: (id: string, container: string, order: number) => void
@@ -381,7 +383,13 @@ interface AppState {
   restoreNote: (id: string) => void
   destroyNote: (id: string) => void
   emptyTrash: () => void
-  createNote: (title?: string, sectionId?: string | null, spaceId?: string) => string
+  createNote: (
+    title?: string,
+    sectionId?: string | null,
+    spaceId?: string,
+    options?: { content?: string; rename?: boolean }
+  ) => string
+  createPdfNote: (title: string, file: string, spaceId?: string) => string
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'content'>>) => void
   setNoteEmoji: (id: string, emoji: string) => void
   /** Persist view state (scroll + caret) without marking the note edited. */
@@ -807,6 +815,11 @@ function blankNote(): Note {
     deletedAt: null,
     emoji: ''
   }
+}
+
+/** Vault-relative PDF attachment for a note, or null for normal notes. */
+function pdfAttachmentOf(note: Note): string | null {
+  return pdfFileForNote(note)
 }
 
 const initialNav: NavKey = 'home'
@@ -1727,6 +1740,38 @@ export const useAppStore = create<AppState>()(
           if (!before) to += 1
           return { noteOrder: [...without.slice(0, to), dragId, ...without.slice(to)] }
         }),
+      moveNoteToSpace: (id, spaceId) =>
+        set((state) => {
+          if (!state.spaces.some((space) => space.id === spaceId)) return {}
+          const note = state.notes.find((n) => n.id === id)
+          if (!note || note.deletedAt) return {}
+          if ((note.spaceId ?? state.spaces[0]?.id) === spaceId) return {}
+          // A section belongs to one space; a note leaving it becomes
+          // ungrouped instead of carrying a stale section id around.
+          const noteSection = { ...state.noteSection }
+          delete noteSection[id]
+          // Tabs are space-scoped: close the moved note everywhere so a
+          // parked space can't reopen it after it has changed owners.
+          const tabOwner = state.notes.filter((n) => n.id !== id)
+          const live = restoreSpaceTabs(snapshotTabs(state), tabOwner)
+          const activeNav =
+            live.tabs.length === 0 && live.activeNav === null ? 'home' : live.activeNav
+          const spaceTabs: Record<string, SpaceTabs> = {}
+          for (const [spaceIdKey, snap] of Object.entries(state.spaceTabs)) {
+            const cleaned = restoreSpaceTabs(snap, tabOwner)
+            spaceTabs[spaceIdKey] =
+              cleaned.tabs.length === 0 && cleaned.activeNav === null
+                ? { ...cleaned, activeNav: 'home' }
+                : cleaned
+          }
+          return {
+            notes: state.notes.map((n) => (n.id === id ? { ...n, spaceId } : n)),
+            noteSection,
+            ...live,
+            activeNav,
+            spaceTabs
+          }
+        }),
       createSection: (title?: string, spaceId?: string) => {
         const owner = spaceId ?? get().activeSpaceId
         const order =
@@ -1873,10 +1918,16 @@ export const useAppStore = create<AppState>()(
           else delete imageLayout[noteId]
           return { imageLayout }
         }),
-      createNote: (title?: string, sectionId?: string | null, spaceId?: string) => {
+      createNote: (
+        title?: string,
+        sectionId?: string | null,
+        spaceId?: string,
+        options: { content?: string; rename?: boolean } = {}
+      ) => {
         const note = {
           ...blankNote(),
           title: (title ?? '').trim(),
+          content: options.content ?? '',
           spaceId: spaceId ?? get().activeSpaceId
         }
         const tab = noteTab(note.id)
@@ -1908,7 +1959,28 @@ export const useAppStore = create<AppState>()(
           })
         }
         // The sidebar picks this up and opens an inline rename field.
-        set({ renamingNoteId: note.id })
+        if (options.rename !== false) set({ renamingNoteId: note.id })
+        return note.id
+      },
+      createPdfNote: (title, file, spaceId) => {
+        if (!isPdfVaultFile(file)) throw new Error('invalid PDF attachment path')
+        const note = {
+          ...blankNote(),
+          title: title.trim() || titleFromPdfFileName(file),
+          content: '',
+          fileName: file,
+          spaceId: spaceId ?? get().activeSpaceId
+        }
+        const tab = noteTab(note.id)
+        set((state) => ({
+          notes: [note, ...state.notes],
+          noteOrder: [note.id, ...state.noteOrder.filter((id) => id !== note.id)],
+          tabs: [...state.tabs, tab],
+          activeTabId: tab.id,
+          activeNav: null,
+          tabRecency: toFront(state.tabRecency, tab.id),
+          ...pushHistory(state.tabHistory, state.historyIndex, note.id)
+        }))
         return note.id
       },
       updateNote: (id, patch) => {
@@ -1977,7 +2049,9 @@ export const useAppStore = create<AppState>()(
         // than 30 days; destroyNote() removes immediately.
         const removed = get().notes.find((n) => n.id === id)
         if (!removed || removed.deletedAt) return
-        const removeFile = Boolean(removed.fileName && get().vaultReady)
+        const removeFile = Boolean(
+          removed.fileName && get().vaultReady && !pdfAttachmentOf(removed)
+        )
         set((state) => {
           const notes = state.notes.map((n) => (n.id === id ? { ...n, deletedAt: Date.now() } : n))
           const tabs = state.tabs.filter((t) => !(t.kind === 'note' && t.noteId === id))
@@ -2013,6 +2087,14 @@ export const useAppStore = create<AppState>()(
       restoreNote: (id) => {
         const note = get().notes.find((n) => n.id === id)
         if (!note?.deletedAt) return
+        // PDF attachments stay in the vault while the note is in Trash, so a
+        // restore only needs to clear the flag.
+        if (pdfFileForNote(note)) {
+          set((state) => ({
+            notes: state.notes.map((n) => (n.id === id ? { ...n, deletedAt: null } : n))
+          }))
+          return
+        }
         const taken = new Set(
           get()
             .notes.filter((n) => n.id !== id)
@@ -2030,14 +2112,15 @@ export const useAppStore = create<AppState>()(
         }
       },
       emptyTrash: () => {
-        // Destroy everything in Trash at once. Vault files are already gone
-        // (removed at trash time), so this only drops records and slots.
-        const ids = new Set(
-          get()
-            .notes.filter((n) => n.deletedAt)
-            .map((n) => n.id)
-        )
+        // Destroy everything in Trash at once. Markdown files are already gone
+        // (removed at trash time); PDF attachments stay until the record is
+        // permanently destroyed so a restore never loses the file.
+        const trashed = get().notes.filter((n) => n.deletedAt)
+        const ids = new Set(trashed.map((n) => n.id))
         if (ids.size === 0) return
+        const pdfFiles = trashed
+          .map((note) => pdfAttachmentOf(note))
+          .filter((file): file is string => Boolean(file))
         set((state) => {
           const tabs = state.tabs.filter((t) => !(t.kind === 'note' && ids.has(t.noteId)))
           const activeTabId = tabs.some((t) => t.id === state.activeTabId)
@@ -2072,12 +2155,18 @@ export const useAppStore = create<AppState>()(
             tabGroup: pruneTabGroupMap(state.tabGroup, keep)
           }
         })
+        for (const file of pdfFiles) {
+          void window.api.vault.removePdf(file).catch((error) => {
+            console.error(`[vault] failed to remove ${file}`, error)
+          })
+        }
       },
       destroyNote: (id) => {
         // Permanent: drops the record, order/section/bookmark slots, and tabs.
         const removed = get().notes.find((n) => n.id === id)
         if (!removed) return
-        const removeFile = Boolean(removed.fileName && get().vaultReady)
+        const pdfFile = pdfAttachmentOf(removed)
+        const removeFile = Boolean(removed.fileName && get().vaultReady && !pdfFile)
         set((state) => {
           const notes = state.notes.filter((n) => n.id !== id)
           const noteOrder = state.noteOrder.filter((noteId) => noteId !== id)
@@ -2115,6 +2204,11 @@ export const useAppStore = create<AppState>()(
         if (removeFile && removed) {
           void window.api.vault.remove(removed.fileName).catch(() => {})
         }
+        if (pdfFile) {
+          void window.api.vault.removePdf(pdfFile).catch((error) => {
+            console.error(`[vault] failed to remove ${pdfFile}`, error)
+          })
+        }
       },
       initVault: (force = false) => {
         if (vaultInitPromise && !force) return vaultInitPromise
@@ -2145,13 +2239,34 @@ export const useAppStore = create<AppState>()(
               }
             }
 
+            const pdfFiles = await window.api.vault.listPdfs()
+            const legacyWrapperFiles = disk
+              .filter((entry) => parsePdfNote(entry.content))
+              .map((entry) => entry.fileName)
             const pendingWrites: { id: string; fileName: string }[] = []
+            const expiredPdfs = get()
+              .notes.filter(
+                (note) => note.deletedAt && Date.now() - note.deletedAt >= TRASH_RETENTION_MS
+              )
+              .map((note) => pdfAttachmentOf(note))
+              .filter((file): file is string => Boolean(file))
             set((state) => {
-              const storedByFile = new Map(state.notes.map((note) => [note.fileName, note]))
+              // Old PDF notes used a JSON markdown wrapper; point them at the
+              // attachment itself so no `.md` file is generated.
+              const stored = state.notes.map((note) => {
+                const file = pdfFileForNote(note)
+                return file && !isPdfVaultFile(note.fileName)
+                  ? { ...note, fileName: file, content: '' }
+                  : note
+              })
+              const storedByFile = new Map(stored.map((note) => [note.fileName, note]))
+              const added = new Set<string>()
               const taken = new Set<string>()
               const notes: Note[] = []
-              // Disk is the source of truth for files that exist there.
+              // Disk is the source of truth for markdown files. Legacy PDF
+              // wrappers are skipped: the attachment itself is the note now.
               for (const entry of disk) {
+                if (parsePdfNote(entry.content)) continue
                 const existing = storedByFile.get(entry.fileName)
                 if (existing) {
                   notes.push({
@@ -2159,8 +2274,9 @@ export const useAppStore = create<AppState>()(
                     content: entry.content,
                     updatedAt: Math.max(existing.updatedAt, Math.round(entry.mtimeMs))
                   })
+                  added.add(existing.id)
                 } else {
-                  notes.push({
+                  const note: Note = {
                     id: crypto.randomUUID(),
                     title: titleFromFileName(entry.fileName),
                     content: entry.content,
@@ -2169,24 +2285,61 @@ export const useAppStore = create<AppState>()(
                     updatedAt: Math.round(entry.mtimeMs) || Date.now(),
                     deletedAt: null,
                     spaceId: state.spaces[0]?.id ?? ''
-                  })
+                  }
+                  notes.push(note)
+                  added.add(note.id)
                 }
                 taken.add(entry.fileName)
+              }
+              // PDFs are first-class notes: one record per attachment, no
+              // markdown sidecar. Existing records keep their title/space.
+              for (const pdf of pdfFiles) {
+                const fileName = `pdfs/${pdf.name}`
+                const existing = storedByFile.get(fileName)
+                if (existing) {
+                  if (!added.has(existing.id)) {
+                    notes.push(existing)
+                    added.add(existing.id)
+                  }
+                  taken.add(fileName)
+                  continue
+                }
+                const note: Note = {
+                  id: crypto.randomUUID(),
+                  title: titleFromPdfFileName(pdf.name),
+                  content: '',
+                  fileName,
+                  createdAt: Math.round(pdf.birthtimeMs) || Date.now(),
+                  updatedAt: Math.round(pdf.mtimeMs) || Date.now(),
+                  deletedAt: null,
+                  spaceId: state.spaces[0]?.id ?? ''
+                }
+                notes.push(note)
+                added.add(note.id)
+                taken.add(fileName)
               }
               // Notes missing on disk (new, or pre-vault) get written out.
               // Trashed notes stay fileless — their files were removed on
               // trash — but their records are kept so Trash survives reloads.
-              for (const note of state.notes) {
-                if (disk.some((entry) => entry.fileName === note.fileName)) continue
+              for (const note of stored) {
+                if (added.has(note.id)) continue
                 if (note.deletedAt) {
                   notes.push(note)
                   if (note.fileName) taken.add(note.fileName)
+                  continue
+                }
+                if (isPdfVaultFile(note.fileName)) {
+                  // The attachment may be missing; keep the record so the
+                  // viewer can report it (and so a restore still works).
+                  notes.push(note)
+                  taken.add(note.fileName)
                   continue
                 }
                 const fileName = uniqueFileName(note.fileName || noteFileBase(note.title), taken)
                 taken.add(fileName)
                 notes.push(fileName === note.fileName ? note : { ...note, fileName })
                 pendingWrites.push({ id: note.id, fileName })
+                added.add(note.id)
               }
               // Trash older than 30 days is destroyed, not restored.
               const retained = notes.filter(
@@ -2246,6 +2399,12 @@ export const useAppStore = create<AppState>()(
               }
             })
 
+            for (const file of expiredPdfs) {
+              void window.api.vault.removePdf(file).catch((error) => {
+                console.error(`[vault] failed to remove expired PDF ${file}`, error)
+              })
+            }
+
             for (const pending of pendingWrites) {
               try {
                 const note = get().notes.find((n) => n.id === pending.id)
@@ -2264,6 +2423,25 @@ export const useAppStore = create<AppState>()(
               }
             }
             set({ vaultReady: true })
+            // Old JSON-wrapper note files are no longer part of the vault;
+            // the PDF attachment itself is the note now.
+            for (const file of legacyWrapperFiles) {
+              void window.api.vault.remove(file).catch((error) => {
+                console.error(`[vault] failed to remove legacy PDF wrapper ${file}`, error)
+              })
+            }
+            // Heal notes whose titles never reached their file names (for
+            // example, every PDF-import era note filed as `untitled-22.md`).
+            for (const note of get().notes) {
+              if (note.deletedAt || pdfFileForNote(note)) continue
+              if (!note.title.trim()) continue
+              const desiredStem = noteFileBase(note.title).replace(/\.md$/i, '')
+              const currentStem = note.fileName.replace(/\.md$/i, '')
+              if (currentStem === desiredStem || currentStem.startsWith(`${desiredStem}-`)) {
+                continue
+              }
+              await get().saveNoteToVault(note.id)
+            }
             // Vault is up — pull planner JSON next (missing files load empty).
             void get().loadPlanner()
           } catch (error) {
@@ -2279,16 +2457,24 @@ export const useAppStore = create<AppState>()(
         if (!state.vaultReady) return
         const note = state.notes.find((n) => n.id === id)
         if (!note || note.deletedAt) return
+        // PDF notes are backed by the attachment itself; there is no markdown
+        // sidecar to create, rename, or write.
+        if (pdfFileForNote(note)) return
         try {
           const taken = new Set(state.notes.filter((n) => n.id !== id).map((n) => n.fileName))
-          let fileName = note.fileName || uniqueFileName(noteFileBase(note.title), taken)
-          if (note.fileName && fileName !== note.fileName) {
-            const renamed = await window.api.vault.rename(note.fileName, fileName)
-            fileName = renamed.name
+          const title = note.title.trim()
+          const desired = title ? uniqueFileName(noteFileBase(title), taken) : ''
+          let fileName = note.fileName
+          if (!fileName) {
+            fileName = desired || uniqueFileName(noteFileBase(title), taken)
             set((s) => ({
               notes: s.notes.map((n) => (n.id === id ? { ...n, fileName } : n))
             }))
-          } else if (!note.fileName) {
+          } else if (title && desired !== fileName) {
+            // File names follow titles: `untitled-22.md` becomes `cs-3162.md`
+            // as soon as the note gets (or changes) a title.
+            const renamed = await window.api.vault.rename(fileName, desired)
+            fileName = renamed.name
             set((s) => ({
               notes: s.notes.map((n) => (n.id === id ? { ...n, fileName } : n))
             }))

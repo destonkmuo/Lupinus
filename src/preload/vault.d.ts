@@ -11,6 +11,18 @@ export interface VaultReadResult {
   mtimeMs: number
 }
 
+export interface PdfImportResult {
+  file: string
+  title: string
+}
+
+export interface PdfFileInfo {
+  name: string
+  mtimeMs: number
+  birthtimeMs: number
+  size: number
+}
+
 export interface VaultApi {
   status(): Promise<{ root: string }>
   choose(): Promise<{ root: string } | null>
@@ -24,4 +36,9 @@ export interface VaultApi {
   writeJson(name: string, data: unknown[]): Promise<void>
   importPicture(sourcePath?: string): Promise<{ file: string; markdown: string } | null>
   importPictureData(name: string, data: ArrayBuffer): Promise<{ file: string; markdown: string }>
+  importPdf(sourcePath?: string): Promise<PdfImportResult | null>
+  importPdfData(name: string, data: ArrayBuffer): Promise<PdfImportResult>
+  listPdfs(): Promise<PdfFileInfo[]>
+  readPdf(file: string): Promise<Uint8Array>
+  removePdf(file: string): Promise<void>
 }

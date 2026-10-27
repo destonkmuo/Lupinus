@@ -22,11 +22,13 @@ import {
 } from '../planner'
 import { formatTime12h } from '../time'
 import { parseStudyChild } from '../study'
+import { pdfFileForNote } from '../pdf'
 import { splitHidden } from '../subpages'
 import { useAppStore, type NavKey } from '../store/appStore'
 
-function previewFor(content: string): string {
-  const body = splitHidden(content).body.trim()
+function previewFor(note: { content: string; fileName: string }): string {
+  if (pdfFileForNote(note)) return 'PDF document'
+  const body = splitHidden(note.content).body.trim()
   const child = parseStudyChild(body)
   if (child?.type === 'flashcards') {
     return `Flashcards · ${child.cards.length} ${child.cards.length === 1 ? 'term' : 'terms'}`
@@ -533,7 +535,7 @@ function Home(): React.JSX.Element {
                   onClick={() => openNote(note.id)}
                 >
                   <span className="home__card-title">{note.title.trim() || 'Untitled'}</span>
-                  <span className="home__card-preview">{previewFor(note.content)}</span>
+                  <span className="home__card-preview">{previewFor(note)}</span>
                   <span className="home__card-meta">Edited {relTime(note.updatedAt)}</span>
                 </button>
               ))}

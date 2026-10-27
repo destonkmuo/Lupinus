@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import FindBar from '../components/FindBar'
 import NoteEditor, { type ChildKind } from '../components/NoteEditor'
+import PdfNoteView from '../components/PdfNoteView'
 import { FlashcardsChildView, MindmapChildView, QuizChildView } from '../components/StudyChild'
 import { addHiddenPage, joinHidden, splitHidden } from '../subpages'
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
@@ -21,6 +22,8 @@ import {
   ChevronRightIcon
 } from '../components/icons'
 import { parseWikiLinks, resolveWikiTarget } from '../notes'
+import { pdfDisplayName, pdfFileForNote } from '../pdf'
+import { importPdfFiles, isPdfFile } from '../pdfImport'
 import { useAppStore, type ImageLayout, type NoteCaret } from '../store/appStore'
 
 /** Stable empty layout so memo deps don't churn. */
@@ -319,6 +322,11 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   // A child note whose body is basic JSON renders its study UI instead of
   // the markdown editor. Hidden footers never render anywhere.
   const studyChild = useMemo(() => parseStudyChild(body), [body])
+  const pdfChild = useMemo(() => {
+    if (!note) return null
+    const file = pdfFileForNote(note)
+    return file ? { type: 'pdf' as const, file } : null
+  }, [note])
 
   const toggleFloat = (src: string, side: ImageSide = 'right'): void => {
     const state = useAppStore.getState()
@@ -377,7 +385,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
 
   const appendBlocks = (blocks: string[]): void => {
     // Study children hold JSON, not markdown — never append blocks to them.
-    if (blocks.length === 0 || !note || studyChild) return
+    if (blocks.length === 0 || !note || studyChild || pdfChild) return
     const split = splitHidden(note.content)
     const trimmed = split.body.trimEnd()
     const nextBody = `${trimmed}${trimmed ? '\n\n' : ''}${blocks.join('\n\n')}\n`
@@ -401,9 +409,31 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     const blocks: string[] = []
     const dropped = Array.from(event.dataTransfer.files ?? [])
+    const pdfs = dropped.filter(isPdfFile)
+    const images = dropped.filter((file) => !isPdfFile(file))
     console.info(`[note] drop: ${dropped.length} file(s)`)
     const failures: string[] = []
-    for (const file of dropped) {
+
+    // PDFs become their own notes in this space; they are never embedded in
+    // the markdown body (which may itself be PDF JSON).
+    let pdfsAdded = 0
+    if (pdfs.length > 0) {
+      try {
+        pdfsAdded = await importPdfFiles(pdfs, note.spaceId ?? useAppStore.getState().activeSpaceId)
+        flashDropStatus(`Added ${pdfsAdded} PDF${pdfsAdded === 1 ? '' : 's'}`, false)
+      } catch (error) {
+        console.error('[note] PDF drop failed', error)
+        flashDropStatus(error instanceof Error ? error.message : 'Could not add the PDF.', true)
+      }
+    }
+    if (pdfChild) {
+      if (images.length > 0) {
+        flashDropStatus('PDF notes can only contain the PDF attachment.', true)
+      }
+      return
+    }
+
+    for (const file of images) {
       try {
         blocks.push(await importDroppedPicture(file))
       } catch (error) {
@@ -430,9 +460,9 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     if (blocks.length > 0) {
       appendBlocks(blocks)
       flashDropStatus(`Added ${blocks.length} picture${blocks.length === 1 ? '' : 's'}`, false)
-    } else if (dropped.length > 0 || urls.length > 0) {
+    } else if (images.length > 0 || urls.length > 0) {
       flashDropStatus(`Couldn't add the drop: ${failures.join('; ') || 'unknown reason'}`, true)
-    } else {
+    } else if (pdfs.length === 0) {
       flashDropStatus('The drop arrived with no files — try the picture button instead', true)
     }
   }
@@ -440,7 +470,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   return (
     <main
       ref={noteRef}
-      className={`note${studyChild ? ' note--study' : ''}`}
+      className={`note${studyChild ? ' note--study' : ''}${pdfChild ? ' note--pdf' : ''}`}
       onDragOver={(event) => {
         const types = dragTypes(event)
         const plausible =
@@ -483,7 +513,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         <div className="note__actions">
           <span className="note__meta">
             Edited {edited}
-            {note.fileName ? ` · ${note.fileName}` : ''}
+            {note.fileName ? ` · ${pdfChild ? pdfDisplayName(pdfChild.file) : note.fileName}` : ''}
           </span>
           <button
             type="button"
@@ -632,7 +662,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
           onContextMenu={(event) => {
             // Right-click a markdown page to add individual children.
             // Study (JSON) children take no subpages — leave native menu.
-            if (studyChild) return
+            if (studyChild || pdfChild) return
             // Right-click anywhere in the page offers Hidden-footer inserts.
             // Let text inputs keep their native menu on small clicks? No —
             // page-level Add actions are more useful here.
@@ -662,14 +692,19 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
                   !event.metaKey &&
                   !event.altKey
                 ) {
-                  event.preventDefault()
-                  noteRef.current?.querySelector<HTMLElement>('.note-editor')?.focus()
+                  const editor = noteRef.current?.querySelector<HTMLElement>('.note-editor')
+                  if (editor) {
+                    event.preventDefault()
+                    editor.focus()
+                  }
                 }
               }}
             />
           )}
 
-          {studyChild ? (
+          {pdfChild ? (
+            <PdfNoteView key={pdfChild.file} file={pdfChild.file} title={note.title} />
+          ) : studyChild ? (
             <div className={`study study--child study--${studyChild.type}`}>
               <div className="study__inner study__inner--child">
                 {studyChild.type === 'flashcards' ? (
@@ -766,7 +801,7 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         </>
       )}
 
-      {findOpen && note && !studyChild && (
+      {findOpen && note && !studyChild && !pdfChild && (
         <FindBar scope={noteRef} content={body} onClose={() => setFindOpen(false)} />
       )}
     </main>

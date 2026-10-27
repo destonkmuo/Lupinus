@@ -138,6 +138,19 @@ export function FileTextIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+export function PdfIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
+      <path d="M14 2v5h5" />
+      <path d="M8.5 17.5v-4h1.1a1.2 1.2 0 0 1 0 2.4H8.5" />
+      <path d="M12.2 13.5H14a1.5 1.5 0 0 1 0 3h-1.8z" />
+      <path d="M16.5 17.5v-4H18" />
+      <path d="M16.5 15.6h1.2" />
+    </IconBase>
+  )
+}
+
 export function PencilIcon(props: IconProps): React.JSX.Element {
   return (
     <IconBase {...props}>

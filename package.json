@@ -28,6 +28,7 @@
     "electron-updater": "^6.3.9",
     "highlight.js": "^11.12.0",
     "katex": "^0.18.7",
+    "pdfjs-dist": "^4.10.38",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

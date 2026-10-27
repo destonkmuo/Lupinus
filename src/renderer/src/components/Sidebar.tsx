@@ -11,6 +11,8 @@ import {
 import { blankFlashcardsBody, blankMindmapBody, blankQuizBody, parseStudyChild } from '../study'
 import { addHiddenPage, joinHidden, splitHidden } from '../subpages'
 import { importDroppedPicture } from '../images'
+import { pdfFileForNote } from '../pdf'
+import { importPdfFiles, importPdfFromDialog, isPdfFile } from '../pdfImport'
 import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 import {
   LOCAL_CALENDAR_ID,
@@ -53,6 +55,7 @@ import {
   GraphIcon,
   MailIcon,
   MindmapIcon,
+  PdfIcon,
   PlusIcon,
   QuizIcon,
   RestoreIcon,
@@ -764,6 +767,7 @@ function Sidebar(): React.JSX.Element {
   const createNote = useAppStore((state) => state.createNote)
   const deleteNote = useAppStore((state) => state.deleteNote)
   const moveNote = useAppStore((state) => state.moveNote)
+  const moveNoteToSpace = useAppStore((state) => state.moveNoteToSpace)
   const noteSections = useAppStore((state) => state.noteSections)
   const noteSection = useAppStore((state) => state.noteSection)
   const noteDividers = useAppStore((state) => state.noteDividers)
@@ -836,6 +840,9 @@ function Sidebar(): React.JSX.Element {
   const [noteIconEmoji, setNoteIconEmoji] = useState('')
   const [spaceDraggingId, setSpaceDraggingId] = useState<string | null>(null)
   const [spaceDropHint, setSpaceDropHint] = useState<{ id: string; before: boolean } | null>(null)
+  const [pdfDropSpaceId, setPdfDropSpaceId] = useState<string | null>(null)
+  const [pdfStatus, setPdfStatus] = useState<{ msg: string; error: boolean } | null>(null)
+  const pdfStatusTimer = useRef<number | null>(null)
   // Trash lives in the rail now; the popover itself stays here (fixed
   // positioning), so the rail only flips this shared flag.
   const trashOpen = useAppStore((state) => state.trashOpen)
@@ -845,6 +852,41 @@ function Sidebar(): React.JSX.Element {
   const widgetOrder = (key: 'today' | 'favorites' | 'notes'): number => {
     const at = sidebarWidgetOrder.indexOf(key)
     return at < 0 ? 0 : at
+  }
+
+  useEffect(
+    () => () => {
+      if (pdfStatusTimer.current !== null) window.clearTimeout(pdfStatusTimer.current)
+    },
+    []
+  )
+
+  const flashPdfStatus = (msg: string, error: boolean): void => {
+    setPdfStatus({ msg, error })
+    if (pdfStatusTimer.current !== null) window.clearTimeout(pdfStatusTimer.current)
+    pdfStatusTimer.current = window.setTimeout(() => setPdfStatus(null), 5000)
+  }
+
+  const importPdfs = async (files: File[], spaceId: string): Promise<boolean> => {
+    const pdfs = files.filter(isPdfFile)
+    if (pdfs.length === 0) return false
+    try {
+      const count = await importPdfFiles(pdfs, spaceId)
+      flashPdfStatus(`Added ${count} PDF${count === 1 ? '' : 's'}`, false)
+    } catch (error) {
+      console.error('[sidebar] PDF import failed', error)
+      flashPdfStatus(error instanceof Error ? error.message : 'Could not add the PDF.', true)
+    }
+    return true
+  }
+
+  const importPdfPicker = async (spaceId?: string): Promise<void> => {
+    try {
+      if (await importPdfFromDialog(spaceId)) flashPdfStatus('PDF added', false)
+    } catch (error) {
+      console.error('[sidebar] PDF import failed', error)
+      flashPdfStatus(error instanceof Error ? error.message : 'Could not add the PDF.', true)
+    }
   }
 
   const openSpaceEditor = (spaceId: string | null): void => {
@@ -1023,6 +1065,7 @@ function Sidebar(): React.JSX.Element {
   const matchesQuery = (note: Note): boolean =>
     !needle ||
     note.title.toLowerCase().includes(needle) ||
+    note.fileName.toLowerCase().includes(needle) ||
     note.content.toLowerCase().includes(needle)
 
   // Every space stays mounted and laid out side by side, so switching is a
@@ -1049,13 +1092,19 @@ function Sidebar(): React.JSX.Element {
     }
     return views
   }, [spaces, notes, noteOrder, query])
-  // The rail owns page destinations, so the sidebar strip only surfaces
-  // bookmarked notes (no duplicate icon row). Notes resolve against the vault
-  // and drop out when trashed/deleted.
+  // Favorites are global: rail pages and notes, in bookmark order. Pages come
+  // from the nav registry; notes resolve against the vault and drop out when
+  // trashed/deleted.
   const favoriteItems = useMemo(
     () =>
       bookmarks.flatMap((bookmark): FavoriteItem[] => {
-        if (bookmark.kind === 'nav') return []
+        if (bookmark.kind === 'nav') {
+          const nav = NAV_BY_KEY[bookmark.key]
+          if (!nav) return []
+          // Match the rail: the chat page shows the chat bubble, not the agent.
+          const icon = bookmark.key === 'agent' ? ChatIcon : nav.icon
+          return [{ kind: 'nav', key: bookmark.key, label: nav.label, icon }]
+        }
         const note = notes.find((n) => n.id === bookmark.id)
         if (!note || note.deletedAt) return []
         return [{ kind: 'note', note }]
@@ -1258,8 +1307,22 @@ function Sidebar(): React.JSX.Element {
     event.stopPropagation()
     setDropNoteId(null)
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    const files = Array.from(event.dataTransfer.files ?? [])
+    const pdfs = files.filter(isPdfFile)
+    if (pdfs.length > 0) {
+      const target = useAppStore.getState().notes.find((n) => n.id === noteId)
+      if (!target || target.deletedAt) return
+      try {
+        const count = await importPdfFiles(pdfs, target.spaceId ?? activeSpaceId)
+        flashPdfStatus(`Added ${count} PDF${count === 1 ? '' : 's'}`, false)
+      } catch (error) {
+        console.error('[sidebar] PDF drop failed', error)
+        flashPdfStatus(error instanceof Error ? error.message : 'Could not add the PDF.', true)
+      }
+      return
+    }
     const blocks: string[] = []
-    for (const file of Array.from(event.dataTransfer.files ?? [])) {
+    for (const file of files) {
       try {
         blocks.push(await importDroppedPicture(file))
       } catch (error) {
@@ -1306,6 +1369,13 @@ function Sidebar(): React.JSX.Element {
     // (Stop here too so the pane catch-all below doesn't double-handle it.)
     event.preventDefault()
     event.stopPropagation()
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) {
+      void importPdfs(files, spaceId).then((handled) => {
+        if (!handled) flashPdfStatus('Drop a PDF here to add it to this space.', true)
+      })
+      return
+    }
     if (sectionDragRef.current) {
       const dragId = sectionDragRef.current
       clearSectionDrag()
@@ -1327,6 +1397,13 @@ function Sidebar(): React.JSX.Element {
   const onPaneDrop = (event: React.DragEvent<HTMLDivElement>, spaceId: string): void => {
     event.preventDefault()
     event.stopPropagation()
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) {
+      void importPdfs(files, spaceId).then((handled) => {
+        if (!handled) flashPdfStatus('Drop a PDF here to add it to this space.', true)
+      })
+      return
+    }
     if (sectionDragRef.current) {
       const dragId = sectionDragRef.current
       clearSectionDrag()
@@ -1782,7 +1859,9 @@ function Sidebar(): React.JSX.Element {
     index: number,
     spaceId: string
   ): React.JSX.Element => {
-    const studyType = parseStudyChild(splitHidden(note.content).body)?.type ?? null
+    const noteBody = splitHidden(note.content).body
+    const studyType = parseStudyChild(noteBody)?.type ?? null
+    const pdfType = pdfFileForNote(note)
     const noteEmoji = note.emoji?.trim() ?? ''
     const NoteIcon =
       studyType === 'flashcards'
@@ -1791,7 +1870,9 @@ function Sidebar(): React.JSX.Element {
           ? MindmapIcon
           : studyType === 'quiz'
             ? QuizIcon
-            : FileTextIcon
+            : pdfType
+              ? PdfIcon
+              : FileTextIcon
     const graph = spaceViews.get(spaceId)?.graph
     const kids = (graph?.children.get(note.id) ?? []).filter(
       (kid) => !ancestors.includes(kid.id) && matchesQuery(kid)
@@ -1968,7 +2049,7 @@ function Sidebar(): React.JSX.Element {
             </button>
           )}
           <div className="sidebar__note-actions">
-            {!studyType && (
+            {!studyType && !pdfType && (
               <button
                 type="button"
                 className="sidebar__icon-btn"
@@ -2407,6 +2488,7 @@ function Sidebar(): React.JSX.Element {
                   const label = note.title.trim() || 'Untitled'
                   const space = spaces.find((s) => s.id === note.spaceId)
                   const emoji = note.emoji?.trim() ?? ''
+                  const pdf = pdfFileForNote(note)
                   const isCurrent = activeTab?.noteId === note.id
                   return (
                     <button
@@ -2428,6 +2510,8 @@ function Sidebar(): React.JSX.Element {
                         <span className="sidebar__fav-emoji" aria-hidden="true">
                           {emoji}
                         </span>
+                      ) : pdf ? (
+                        <PdfIcon size={17} />
                       ) : (
                         <FileTextIcon size={17} />
                       )}
@@ -2463,6 +2547,15 @@ function Sidebar(): React.JSX.Element {
                   <button
                     type="button"
                     className="sidebar__icon-btn"
+                    title={activeSpace ? `Import PDF into ${activeSpace.name}` : 'Import PDF'}
+                    aria-label={activeSpace ? `Import PDF into ${activeSpace.name}` : 'Import PDF'}
+                    onClick={() => void importPdfPicker(activeSpaceId || undefined)}
+                  >
+                    <PdfIcon size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    className="sidebar__icon-btn"
                     title={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
                     aria-label={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
                     onClick={() => createNote()}
@@ -2470,6 +2563,12 @@ function Sidebar(): React.JSX.Element {
                     <PlusIcon size={22} />
                   </button>
                 </div>
+
+                {pdfStatus && (
+                  <p className={`sidebar__pdf-status${pdfStatus.error ? ' is-error' : ''}`}>
+                    {pdfStatus.msg}
+                  </p>
+                )}
 
                 <div className="sidebar__space-swap">
                   <div
@@ -3119,7 +3218,7 @@ function Sidebar(): React.JSX.Element {
                 data-sortable-item
                 data-sortable-id={`space:${space.id}`}
                 draggable
-                className={`sidebar__space-icon${space.id === activeSpaceId ? ' is-active' : ''} is-distance-${Math.min(circularDistance, 3)}${spaceDraggingId === space.id ? ' is-dragging' : ''}${spaceDropHint?.id === space.id ? (spaceDropHint.before ? ' is-drop-before' : ' is-drop-after') : ''}`}
+                className={`sidebar__space-icon${space.id === activeSpaceId ? ' is-active' : ''} is-distance-${Math.min(circularDistance, 3)}${spaceDraggingId === space.id ? ' is-dragging' : ''}${spaceDropHint?.id === space.id ? (spaceDropHint.before ? ' is-drop-before' : ' is-drop-after') : ''}${pdfDropSpaceId === space.id ? ' is-pdf-drop' : ''}`}
                 title={space.emoji.trim() ? `${space.emoji} ${space.name}` : space.name}
                 aria-label={`${space.name}${space.id === activeSpaceId ? ', current space' : ''}`}
                 aria-pressed={space.id === activeSpaceId}
@@ -3137,27 +3236,60 @@ function Sidebar(): React.JSX.Element {
                   setSpaceDropHint(null)
                 }}
                 onDragOver={(event) => {
-                  if (!spaceDragRef.current || spaceDragRef.current === space.id) return
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = 'move'
-                  const rect = event.currentTarget.getBoundingClientRect()
-                  setSpaceDropHint({
-                    id: space.id,
-                    before: event.clientX < rect.left + rect.width / 2
-                  })
+                  if (spaceDragRef.current) {
+                    if (spaceDragRef.current === space.id) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    setSpaceDropHint({
+                      id: space.id,
+                      before: event.clientX < rect.left + rect.width / 2
+                    })
+                    return
+                  }
+                  const hasFiles = Array.from(event.dataTransfer.types ?? []).some(
+                    (type) => type === 'Files'
+                  )
+                  if (dragIdRef.current || hasFiles) {
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = dragIdRef.current ? 'move' : 'copy'
+                    setPdfDropSpaceId(space.id)
+                  }
                 }}
-                onDragLeave={() =>
+                onDragLeave={() => {
                   setSpaceDropHint((hint) => (hint?.id === space.id ? null : hint))
-                }
+                  setPdfDropSpaceId((id) => (id === space.id ? null : id))
+                }}
                 onDrop={(event) => {
                   event.preventDefault()
-                  const dragId = spaceDragRef.current
-                  spaceDragRef.current = null
-                  setSpaceDraggingId(null)
-                  setSpaceDropHint(null)
-                  if (!dragId || dragId === space.id) return
-                  const rect = event.currentTarget.getBoundingClientRect()
-                  moveSpace(dragId, space.id, event.clientX < rect.left + rect.width / 2)
+                  if (spaceDragRef.current) {
+                    const dragId = spaceDragRef.current
+                    spaceDragRef.current = null
+                    setSpaceDraggingId(null)
+                    setSpaceDropHint(null)
+                    if (!dragId || dragId === space.id) return
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    moveSpace(dragId, space.id, event.clientX < rect.left + rect.width / 2)
+                    return
+                  }
+                  const noteId = dragIdRef.current
+                  if (noteId) {
+                    clearDrag()
+                    setPdfDropSpaceId(null)
+                    if (space.id !== activeSpaceId) {
+                      moveNoteToSpace(noteId, space.id)
+                      flashPdfStatus(`Moved to ${space.name}`, false)
+                    }
+                    return
+                  }
+                  const files = Array.from(event.dataTransfer.files ?? [])
+                  setPdfDropSpaceId(null)
+                  if (files.length === 0) return
+                  void importPdfs(files, space.id).then((handled) => {
+                    if (!handled) {
+                      flashPdfStatus('Drop a PDF here to add it to this space.', true)
+                    }
+                  })
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault()

@@ -3,6 +3,8 @@ import { respondTo } from '../agentBrain'
 import { NAV_BY_KEY, NAV_ITEMS } from '../nav'
 import { useAppStore } from '../store/appStore'
 import { formatTime12h } from '../time'
+import { splitHidden } from '../subpages'
+import { pdfFileForNote } from '../pdf'
 import { AgentIcon, CommandIcon, FileTextIcon, SearchIcon, TaskIcon } from './icons'
 
 /**
@@ -179,14 +181,19 @@ function Spotlight(): React.JSX.Element | null {
         .slice()
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 5)
-        .map((n): Result => ({
-          kind: 'note',
-          id: n.id,
-          title: n.title.trim() || 'Untitled',
-          lines: n.content.trim()
-            ? [plainPreview(n.content.split('\n').find((l) => l.trim()) ?? '')]
-            : []
-        }))
+        .map((n): Result => {
+          const body = splitHidden(n.content).body.trim()
+          return {
+            kind: 'note',
+            id: n.id,
+            title: n.title.trim() || 'Untitled',
+            lines: pdfFileForNote(n)
+              ? ['PDF document']
+              : body
+                ? [plainPreview(body.split('\n').find((l) => l.trim()) ?? '')]
+                : []
+          }
+        })
       return [
         ...recent,
         ...NAV_ITEMS.map((item): Result => ({
@@ -200,17 +207,21 @@ function Spotlight(): React.JSX.Element | null {
     const out: Result[] = []
     for (const note of live) {
       const titleHit = note.title.toLowerCase().includes(needle)
-      const hits = note.content
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line && line.toLowerCase().includes(needle))
-        .slice(0, 2)
-      if (titleHit || hits.length > 0) {
+      const pdf = pdfFileForNote(note)
+      const pdfHit = Boolean(pdf && needle && 'pdf document'.includes(needle))
+      const hits = pdf
+        ? []
+        : note.content
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line && line.toLowerCase().includes(needle))
+            .slice(0, 2)
+      if (titleHit || pdfHit || hits.length > 0) {
         out.push({
           kind: 'note',
           id: note.id,
           title: note.title.trim() || 'Untitled',
-          lines: hits.map((line) => plainPreview(line))
+          lines: pdf ? ['PDF document'] : hits.map((line) => plainPreview(line))
         })
       }
     }

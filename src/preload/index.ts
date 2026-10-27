@@ -19,7 +19,13 @@ const vault: VaultApi = {
   writeJson: (name: string, data: unknown[]) => ipcRenderer.invoke('vault:writeJson', name, data),
   importPicture: (sourcePath?: string) => ipcRenderer.invoke('vault:importPicture', sourcePath),
   importPictureData: (name: string, data: ArrayBuffer) =>
-    ipcRenderer.invoke('vault:importPictureData', name, data)
+    ipcRenderer.invoke('vault:importPictureData', name, data),
+  importPdf: (sourcePath?: string) => ipcRenderer.invoke('vault:importPdf', sourcePath),
+  importPdfData: (name: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke('vault:importPdfData', name, data),
+  listPdfs: () => ipcRenderer.invoke('vault:listPdfs'),
+  readPdf: (file: string) => ipcRenderer.invoke('vault:readPdf', file),
+  removePdf: (file: string) => ipcRenderer.invoke('vault:removePdf', file)
 }
 
 const api = {
