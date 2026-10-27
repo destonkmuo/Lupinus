@@ -5,7 +5,7 @@ spoken replies with Piper TTS (Alba voice).
 Architecture:
   * A background thread continuously transcribes a rolling window of microphone
     audio with a *tiny* whisper model, purely to check whether the wake phrase
-    ("hey simo") was said. Its output is never printed or merged anywhere.
+    ("hey lu") was said. Its output is never printed or merged anywhere.
   * The main thread captures audio and uses a tiny built-in energy gate (pure
     numpy, not an external model) to detect the end of the utterance.
   * The captured buffer is transcribed exactly once with a larger whisper model
@@ -58,12 +58,12 @@ WAKE_MODEL = os.environ.get("WHISPER_WAKE_MODEL", "models/ggml-tiny.bin")
 TRANSCRIBE_MODEL = os.environ.get("WHISPER_MODEL", "models/ggml-base.bin")
 
 # Wake-word listener tuning. Checked twice as often over a shorter window so
-# "hey simo" trips detection fast: worst case ~0.5s scheduling delay plus one
+# "hey lu" trips detection fast: worst case ~0.5s scheduling delay plus one
 # tiny-model pass over 3s of audio (well under a second on CPU).
 WAKE_WINDOW_SECONDS = 3.0      # audio window fed to whisper each check
 WAKE_INTERVAL = 0.5            # seconds between wake-word checks
 # Whisper sometimes hears "jarvis" slightly differently; keep a small alias set.
-WAKE_ALIASES = ("simo", "sima", "simmo", "simoe", "seema", "sema")
+WAKE_ALIASES = ("loo", "lupinus", "lupin", "lu", "lou")
 
 # Endpointing via a simple RMS energy gate.
 ENERGY_THRESHOLD = 0.012       # RMS in [0, 1]
@@ -212,6 +212,7 @@ class WakeListener(threading.Thread):
                 if samples is not None:
                     try:
                         text = normalize(run_whisper(WAKE_MODEL, samples))
+                        print(text)
                         if contains_wake_word(text):
                             self.detected.set()
                     except Exception as exc:  # noqa: BLE001
@@ -421,7 +422,7 @@ def main() -> None:
             f"(PIPER_VOICE={PIPER_VOICE}); run start.sh\n"
         )
 
-    sys.stderr.write("[info] listening for 'hey simo'... (speak to interact)\n")
+    sys.stderr.write("[info] listening for 'hey lu'... (speak to interact)\n")
 
     state = "LISTEN"
     gate = EnergyGate()

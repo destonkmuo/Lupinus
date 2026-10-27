@@ -249,6 +249,34 @@ else
 fi
 log "whisper-cli: $WHISPER_CLI"
 
+# macOS bakes the build directory into each binary's LC_RPATH, so moving or
+# renaming the project afterwards leaves whisper-cli unable to find
+# libwhisper.dylib ("Library not loaded: @rpath/libwhisper.1.dylib"). Rewrite
+# absolute rpaths to @loader_path so the tree is self-relative; this also
+# repairs an already-built tree, so re-running start.sh is enough after a move.
+if [ "$OS" = "macos" ] && [ -n "$WHISPER_CLI" ]; then
+  WHISPER_BIN_DIR_BUILT="$(cd "$(dirname "$WHISPER_CLI")" && pwd)"
+  find "$WHISPER_BIN_DIR_BUILT" -maxdepth 1 -type f | while IFS= read -r bin; do
+    file -b "$bin" | grep -q 'Mach-O' || continue
+    changed=0
+    while IFS= read -r rpath; do
+      [ -n "$rpath" ] || continue
+      case "$rpath" in
+        @*) continue ;;
+      esac
+      install_name_tool -delete_rpath "$rpath" "$bin" >/dev/null 2>&1 && changed=1
+    done < <(otool -l "$bin" | awk '/LC_RPATH/ { getline; getline; sub(/^[[:space:]]*path /, ""); sub(/ \(offset.*/, ""); print }')
+    if ! otool -l "$bin" | grep -q '@loader_path'; then
+      install_name_tool -add_rpath '@loader_path' "$bin" >/dev/null 2>&1 && changed=1
+    fi
+    # Editing a Mach-O invalidates its code signature; arm64 refuses to run
+    # binaries without one, so re-sign ad-hoc when anything changed.
+    if [ "$changed" = 1 ]; then
+      codesign --force --sign - "$bin" >/dev/null 2>&1 || true
+    fi
+  done
+fi
+
 # NOTE: piper TTS needs no binary download — `pip install piper-tts` in
 # section 4 ships the native libs for every OS. Only the voice model below
 # is fetched here.

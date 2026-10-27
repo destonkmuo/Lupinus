@@ -95,13 +95,25 @@ const desiredBundlePath = join(distDir, desiredBundleName)
 let bundlePath = join(distDir, bundleName)
 let nextRelativeExecutable = relativeExecutable
 
+/**
+ * True when `path` is the stock Electron dev bundle (possibly already renamed
+ * and re-branded by an earlier run). Renaming is only ever allowed for these:
+ * a prior product name is safe, anything else in dist/ is not ours to touch.
+ * The bundle identifier is written by Electron's own install and our branding
+ * only changes display name/icon, so it survives renames.
+ */
+function isDevElectronBundle(path) {
+  const plist = join(path, 'Contents', 'Info.plist')
+  return existsSync(plist) && plistGet(plist, 'CFBundleIdentifier') === 'com.github.Electron'
+}
+
 if (bundleName !== desiredBundleName) {
-  if (bundleName !== 'Electron.app') {
+  if (!isDevElectronBundle(bundlePath)) {
     warn(`Refusing to rename unexpected bundle "${bundleName}"`)
     process.exit(0)
   }
   if (existsSync(desiredBundlePath)) {
-    warn(`Both Electron.app and ${desiredBundleName} exist; leaving them alone`)
+    warn(`Both ${bundleName} and ${desiredBundleName} exist; leaving them alone`)
     process.exit(0)
   }
   try {
@@ -110,7 +122,7 @@ if (bundleName !== desiredBundleName) {
     warn(`Could not rename the dev bundle: ${error.message}`)
     process.exit(0)
   }
-  nextRelativeExecutable = relativeExecutable.replace(/^Electron\.app/, desiredBundleName)
+  nextRelativeExecutable = relativeExecutable.replace(/^[^/]+\.app/, desiredBundleName)
   try {
     writeFileSync(pathFile, nextRelativeExecutable)
   } catch (error) {
