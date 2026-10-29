@@ -2951,7 +2951,7 @@ button.note__crumb:hover {
   flex-direction: column;
   width: 244px;
   min-height: 0;
-  padding: 2px 8px 12px;
+  padding: 2px 0 12px;
   overflow: hidden;
   /* Same surface as the note area: no separate panel fill. */
   background: transparent;
@@ -2989,8 +2989,9 @@ button.note__crumb:hover {
   display: flex;
   flex: 1;
   flex-direction: column;
-  /* Fixed width keeps the outline from reflowing while the pane animates. */
-  width: 244px;
+  /* Fill the panel's content area (panel width minus its horizontal padding)
+     so right-hand padding is never clipped during collapse/expand. */
+  width: auto;
   min-height: 0;
   transition:
     opacity 150ms ease,
@@ -3063,7 +3064,7 @@ button.note__crumb:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 4px 6px 8px;
+  padding: 2px 10px 6px 10px;
 }
 
 .doctabs__title {
@@ -3128,7 +3129,7 @@ button.note__crumb:hover {
 }
 
 .doctabs__empty {
-  margin: 8px 6px;
+  margin: 8px 10px;
   color: var(--ev-c-text-3);
   font-size: 12px;
   line-height: 1.5;
