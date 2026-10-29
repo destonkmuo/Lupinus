@@ -826,7 +826,12 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
 
       <div className="note__body">
         {docTabsVisible && !studyChild && !pdfChild && (
-          <DocumentTabs content={body} activeIndex={activeHeading} onSelect={scrollToHeading} />
+          <DocumentTabs
+            key={note?.id}
+            content={body}
+            activeIndex={activeHeading}
+            onSelect={scrollToHeading}
+          />
         )}
 
         <div

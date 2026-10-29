@@ -16,7 +16,7 @@ interface DocumentTabsProps {
  * immediately, indented by heading level.
  */
 function DocumentTabs({ content, activeIndex, onSelect }: DocumentTabsProps): React.JSX.Element {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const items = useMemo(() => documentHeadings(content), [content])
 
   return (
