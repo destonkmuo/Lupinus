@@ -1,4 +1,5 @@
 import { splitHidden } from './subpages'
+import { FENCE, HEADING, compactBlockContent } from './markdown'
 
 /**
  * Mapping between notes and vault files.
@@ -69,6 +70,66 @@ export function parseWikiLinks(source: string): WikiLink[] {
     links.push({ target, alias })
   }
   return links
+}
+
+/** One heading in a note, in document order. */
+export interface DocumentHeading {
+  level: number
+  /** Plain text (inline markdown markers removed) for the outline. */
+  text: string
+}
+
+/** Strip common inline markers so outline labels read like rendered text. */
+function headingLabel(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(
+      /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+      (_, target: string, alias?: string) => alias || target
+    )
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\$\$?([^$]*)\$\$?/g, '$1')
+    .replace(/[`*_~=]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Headings rendered by the note editor, in display order. Indices line up with
+ * the `[data-kind="heading"]` rows, which is how the document-tabs panel jumps
+ * to a section. Fenced code and display math are skipped, and compact
+ * `{ # heading }` blocks are included, mirroring the editor's parser.
+ */
+export function documentHeadings(source: string): DocumentHeading[] {
+  const lines = source.replace(/\r\n?/g, '\n').split('\n')
+  const headings: DocumentHeading[] = []
+  let inFence = false
+  let inMath = false
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (FENCE.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    if (inMath) {
+      if (trimmed.endsWith('$$')) inMath = false
+      continue
+    }
+    if (trimmed === '$$') {
+      inMath = true
+      continue
+    }
+    if (trimmed.startsWith('$$') && trimmed.length > 4 && trimmed.endsWith('$$')) continue
+    const candidate = compactBlockContent(line) ?? line
+    const match = HEADING.exec(candidate)
+    if (!match) continue
+    headings.push({
+      level: Math.max(1, Math.min(6, match[1].length)),
+      text: headingLabel(match[2])
+    })
+  }
+  return headings
 }
 
 /** Minimal note shape needed for link resolution (avoids a store import). */

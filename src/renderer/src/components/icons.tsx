@@ -74,6 +74,29 @@ export function MoreIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+/** Checkmark for selected menu options. */
+export function CheckIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props} strokeWidth={2.6}>
+      <path d="m4 12.5 5 5L20 6.5" />
+    </IconBase>
+  )
+}
+
+/** Appearance / layout sliders (used by the note options menu). */
+export function LayoutIcon(props: IconProps): React.JSX.Element {
+  return (
+    <IconBase {...props}>
+      <path d="M4 6h16" />
+      <path d="M4 12h16" />
+      <path d="M4 18h16" />
+      <circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="2" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="18" r="2" fill="currentColor" stroke="none" />
+    </IconBase>
+  )
+}
+
 /** Six-dot drag grip for reordering blocks. */
 export function GripIcon(props: IconProps): React.JSX.Element {
   return (

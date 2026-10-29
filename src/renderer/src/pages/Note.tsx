@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import DocumentTabs from '../components/DocumentTabs'
 import FindBar from '../components/FindBar'
 import NoteEditor, { type ChildKind } from '../components/NoteEditor'
 import PdfNoteView from '../components/PdfNoteView'
@@ -19,12 +20,21 @@ import {
   QuizIcon,
   MoreIcon,
   BookmarkIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  ChevronLeftIcon,
+  LayoutIcon,
+  CheckIcon
 } from '../components/icons'
 import { parseWikiLinks, resolveWikiTarget } from '../notes'
 import { pdfDisplayName, pdfFileForNote } from '../pdf'
 import { importPdfFiles, isPdfFile } from '../pdfImport'
-import { useAppStore, type ImageLayout, type NoteCaret } from '../store/appStore'
+import {
+  NOTE_WIDTH_MAX,
+  NOTE_WIDTH_MIN,
+  useAppStore,
+  type ImageLayout,
+  type NoteCaret
+} from '../store/appStore'
 
 /** Stable empty layout so memo deps don't churn. */
 const NO_LAYOUT: Record<string, ImageLayout> = {}
@@ -48,6 +58,14 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   const bookmarks = useAppStore((state) => state.bookmarks)
   const toggleBookmark = useAppStore((state) => state.toggleBookmark)
   const openNoteInCurrentTab = useAppStore((state) => state.openNoteInCurrentTab)
+  const noteLayout = useAppStore((state) => state.noteLayout)
+  const noteWidth = useAppStore((state) => state.noteWidth)
+  const noteFontSize = useAppStore((state) => state.noteFontSize)
+  const docTabsVisible = useAppStore((state) => state.docTabsVisible)
+  const setNoteLayout = useAppStore((state) => state.setNoteLayout)
+  const setNoteWidth = useAppStore((state) => state.setNoteWidth)
+  const setNoteFontSize = useAppStore((state) => state.setNoteFontSize)
+  const setDocTabsVisible = useAppStore((state) => state.setDocTabsVisible)
   const isBookmarked = note !== null && bookmarks.some((b) => b.kind === 'note' && b.id === note.id)
 
   const [dropActive, setDropActive] = useState(false)
@@ -59,6 +77,10 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   const [scrollbarVisible, setScrollbarVisible] = useState(false)
   const [pageMenu, setPageMenu] = useState<{ x: number; y: number } | null>(null)
   const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null)
+  /** Which pane the note options menu shows: main actions or appearance. */
+  const [headerPane, setHeaderPane] = useState<'main' | 'appearance'>('main')
+  /** Outline heading currently in view (-1 above the first heading). */
+  const [activeHeading, setActiveHeading] = useState(-1)
   const noteRef = useRef<HTMLElement>(null)
 
   // View state is persisted per note so reopening lands where the reader left
@@ -235,6 +257,14 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   // right-click → Add appends `[[links]]` to the footer instead of the body.
   const body = useMemo(() => splitHidden(note?.content ?? '').body, [note?.content])
 
+  // A newly opened note starts without an outline selection. Render-time
+  // adjustment (matching the find-bar reset below) avoids an extra effect.
+  const [headingNoteId, setHeadingNoteId] = useState(noteId)
+  if (headingNoteId !== noteId) {
+    setHeadingNoteId(noteId)
+    setActiveHeading(-1)
+  }
+
   // Esc closes the page menu and the header options menu.
   useEffect(() => {
     if (!pageMenu && !headerMenu) return
@@ -374,6 +404,27 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     [docked, noteId]
   )
 
+  /** Highlight the outline entry whose heading last crossed the top edge. */
+  const syncActiveHeading = (): void => {
+    const scroller = scrollRef.current
+    const editor = noteRef.current?.querySelector<HTMLElement>('.note-editor')
+    if (!scroller || !editor) return
+    const nodes = editor.querySelectorAll<HTMLElement>('[data-kind="heading"]')
+    const top = scroller.getBoundingClientRect().top + 28
+    let next = -1
+    nodes.forEach((node, index) => {
+      if (node.getBoundingClientRect().top <= top) next = index
+    })
+    setActiveHeading((current) => (current === next ? current : next))
+  }
+
+  // Restored scroll positions don't emit a scroll event, so seed the outline
+  // selection once the editor has rendered the note.
+  useEffect(() => {
+    const timer = window.setTimeout(syncActiveHeading, 80)
+    return () => window.clearTimeout(timer)
+  }, [noteId, docTabsVisible])
+
   if (!note) {
     return (
       <main className="note note--empty">
@@ -390,6 +441,26 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
     const trimmed = split.body.trimEnd()
     const nextBody = `${trimmed}${trimmed ? '\n\n' : ''}${blocks.join('\n\n')}\n`
     updateNote(note.id, { content: joinHidden(nextBody, split.hidden) })
+  }
+
+  /** Bring the Nth rendered heading into view (document-tabs click). */
+  const scrollToHeading = (index: number): void => {
+    const scroller = scrollRef.current
+    const editor = noteRef.current?.querySelector<HTMLElement>('.note-editor')
+    setActiveHeading(index)
+    if (!scroller || !editor) return
+    if (index < 0) {
+      scroller.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+    const target = editor.querySelectorAll<HTMLElement>('[data-kind="heading"]')[index]
+    if (!target) return
+    const offset =
+      target.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop -
+      16
+    scroller.scrollTo({ top: Math.max(0, offset), behavior: 'smooth' })
   }
 
   const dragTypes = (event: React.DragEvent): string[] => Array.from(event.dataTransfer.types ?? [])
@@ -470,7 +541,10 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
   return (
     <main
       ref={noteRef}
-      className={`note${studyChild ? ' note--study' : ''}${pdfChild ? ' note--pdf' : ''}`}
+      className={`note note--${noteLayout} note--fs-${noteFontSize}${
+        studyChild ? ' note--study' : ''
+      }${pdfChild ? ' note--pdf' : ''}`}
+      style={{ '--note-width': `${noteWidth}px` } as React.CSSProperties}
       onDragOver={(event) => {
         const types = dragTypes(event)
         const plausible =
@@ -536,10 +610,11 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
               if (headerMenu) {
                 setHeaderMenu(null)
               } else {
+                setHeaderPane('main')
                 const rect = event.currentTarget.getBoundingClientRect()
                 setHeaderMenu({
                   x: Math.max(8, Math.min(rect.right - 170, window.innerWidth - 180)),
-                  y: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 280))
+                  y: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 380))
                 })
               }
             }}
@@ -564,73 +639,181 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
             className="note-menu note-menu--fixed"
             role="menu"
             aria-label="Note options"
-            style={{ left: headerMenu.x, top: headerMenu.y }}
+            style={{
+              // The appearance pane is wider than the main menu; keep the
+              // right edge anchored to the options button.
+              left: Math.max(8, headerMenu.x - (headerPane === 'appearance' ? 104 : 0)),
+              top: headerMenu.y
+            }}
             onContextMenu={(event) => event.preventDefault()}
           >
-            {!studyChild && (
+            {headerPane === 'main' ? (
               <>
-                <p className="tabmenu__label">Add child</p>
+                {!studyChild && (
+                  <>
+                    <p className="tabmenu__label">Add child</p>
+                    <button
+                      type="button"
+                      className="note-menu__item"
+                      onClick={() => {
+                        setHeaderMenu(null)
+                        addSubpage()
+                      }}
+                    >
+                      <FileTextIcon size={14} />
+                      New page
+                    </button>
+                    <button
+                      type="button"
+                      className="note-menu__item"
+                      onClick={() => {
+                        setHeaderMenu(null)
+                        addStudyApp('flashcards')
+                      }}
+                    >
+                      <CardsIcon size={14} />
+                      New flashcards
+                    </button>
+                    <button
+                      type="button"
+                      className="note-menu__item"
+                      onClick={() => {
+                        setHeaderMenu(null)
+                        addStudyApp('mindmap')
+                      }}
+                    >
+                      <MindmapIcon size={14} />
+                      New mindmap
+                    </button>
+                    <button
+                      type="button"
+                      className="note-menu__item"
+                      onClick={() => {
+                        setHeaderMenu(null)
+                        addStudyApp('quiz')
+                      }}
+                    >
+                      <QuizIcon size={14} />
+                      New quiz (blank)
+                    </button>
+                    <div className="note-menu__sep" />
+                  </>
+                )}
                 <button
                   type="button"
                   className="note-menu__item"
-                  onClick={() => {
-                    setHeaderMenu(null)
-                    addSubpage()
-                  }}
+                  onClick={() => setHeaderPane('appearance')}
                 >
-                  <FileTextIcon size={14} />
-                  New page
+                  <LayoutIcon size={14} />
+                  Appearance and layout
+                  <ChevronRightIcon size={13} className="note-menu__chevron" />
                 </button>
+                <div className="note-menu__sep" />
                 <button
                   type="button"
-                  className="note-menu__item"
+                  className="note-menu__item note-menu__item--danger"
                   onClick={() => {
                     setHeaderMenu(null)
-                    addStudyApp('flashcards')
+                    const label = note.title.trim() || 'Untitled'
+                    if (
+                      window.confirm(
+                        `Delete "${label}"? You can restore it from Trash within 30 days.`
+                      )
+                    ) {
+                      deleteNote(note.id)
+                    }
                   }}
                 >
-                  <CardsIcon size={14} />
-                  New flashcards
-                </button>
-                <button
-                  type="button"
-                  className="note-menu__item"
-                  onClick={() => {
-                    setHeaderMenu(null)
-                    addStudyApp('mindmap')
-                  }}
-                >
-                  <MindmapIcon size={14} />
-                  New mindmap
-                </button>
-                <button
-                  type="button"
-                  className="note-menu__item"
-                  onClick={() => {
-                    setHeaderMenu(null)
-                    addStudyApp('quiz')
-                  }}
-                >
-                  <QuizIcon size={14} />
-                  New quiz (blank)
+                  Delete note
                 </button>
               </>
+            ) : (
+              <div className="note-menu__pane">
+                <button
+                  type="button"
+                  className="note-menu__back"
+                  onClick={() => setHeaderPane('main')}
+                >
+                  <ChevronLeftIcon size={13} />
+                  Appearance and layout
+                </button>
+
+                <p className="tabmenu__label">Layout</p>
+                <div className="note-menu__choices" role="group" aria-label="Note layout">
+                  <button
+                    type="button"
+                    className={`note-menu__choice${noteLayout === 'full' ? ' is-active' : ''}`}
+                    aria-pressed={noteLayout === 'full'}
+                    title="Stretch the page across the whole pane"
+                    onClick={() => setNoteLayout('full')}
+                  >
+                    Full width
+                  </button>
+                  <button
+                    type="button"
+                    className={`note-menu__choice${noteLayout === 'centered' ? ' is-active' : ''}`}
+                    aria-pressed={noteLayout === 'centered'}
+                    title="Use a centered, readable column"
+                    onClick={() => setNoteLayout('centered')}
+                  >
+                    Centered
+                  </button>
+                </div>
+
+                <label className="note-menu__field" htmlFor="note-width">
+                  Content width
+                  <span>{noteWidth}px</span>
+                </label>
+                <input
+                  id="note-width"
+                  type="range"
+                  className="note-menu__slider"
+                  min={NOTE_WIDTH_MIN}
+                  max={NOTE_WIDTH_MAX}
+                  step={20}
+                  value={noteWidth}
+                  disabled={noteLayout === 'full'}
+                  onChange={(event) => setNoteWidth(Number(event.target.value))}
+                />
+
+                <p className="tabmenu__label">Text size</p>
+                <div className="note-menu__choices" role="group" aria-label="Note text size">
+                  {(
+                    [
+                      ['small', 'Small'],
+                      ['default', 'Default'],
+                      ['large', 'Large']
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`note-menu__choice${noteFontSize === value ? ' is-active' : ''}`}
+                      aria-pressed={noteFontSize === value}
+                      onClick={() => setNoteFontSize(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  className="note-menu__toggle"
+                  aria-pressed={docTabsVisible}
+                  onClick={() => setDocTabsVisible(!docTabsVisible)}
+                >
+                  <span className={`note-menu__checkbox${docTabsVisible ? ' is-checked' : ''}`}>
+                    {docTabsVisible && <CheckIcon size={10} />}
+                  </span>
+                  Sections
+                </button>
+                <p className="note-menu__hint">
+                  Full width is the default. Centered keeps the page at a comfortable reading width,
+                  with the auto-generated sections outline beside it.
+                </p>
+              </div>
             )}
-            <button
-              type="button"
-              className="note-menu__item note-menu__item--danger"
-              onClick={() => {
-                setHeaderMenu(null)
-                const label = note.title.trim() || 'Untitled'
-                if (
-                  window.confirm(`Delete "${label}"? You can restore it from Trash within 30 days.`)
-                ) {
-                  deleteNote(note.id)
-                }
-              }}
-            >
-              Delete note
-            </button>
           </div>
         </>
       )}
@@ -641,96 +824,103 @@ function Note({ noteId }: { noteId: string }): React.JSX.Element {
         </p>
       )}
 
-      <div
-        ref={scrollRef}
-        className={`note__scroll${dropActive ? ' is-drop-target' : ''}${
-          scrollbarVisible ? ' is-scrollbar-visible' : ''
-        }`}
-        onMouseMove={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect()
-          const nearRight = rect.right - event.clientX <= 22
-          setScrollbarVisible((visible) => (visible === nearRight ? visible : nearRight))
-        }}
-        onMouseLeave={() => setScrollbarVisible(false)}
-        onScroll={() => {
-          scrollTopRef.current = scrollRef.current?.scrollTop ?? 0
-          scheduleViewSave()
-        }}
-      >
+      <div className="note__body">
+        {docTabsVisible && !studyChild && !pdfChild && (
+          <DocumentTabs content={body} activeIndex={activeHeading} onSelect={scrollToHeading} />
+        )}
+
         <div
-          className="note__doc"
-          onContextMenu={(event) => {
-            // Right-click a markdown page to add individual children.
-            // Study (JSON) children take no subpages — leave native menu.
-            if (studyChild || pdfChild) return
-            // Right-click anywhere in the page offers Hidden-footer inserts.
-            // Let text inputs keep their native menu on small clicks? No —
-            // page-level Add actions are more useful here.
-            event.preventDefault()
-            setPageMenu({
-              x: Math.max(8, Math.min(event.clientX, window.innerWidth - 220)),
-              y: Math.max(8, Math.min(event.clientY, window.innerHeight - 280))
-            })
+          ref={scrollRef}
+          className={`note__scroll${dropActive ? ' is-drop-target' : ''}${
+            scrollbarVisible ? ' is-scrollbar-visible' : ''
+          }`}
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            const nearRight = rect.right - event.clientX <= 22
+            setScrollbarVisible((visible) => (visible === nearRight ? visible : nearRight))
+          }}
+          onMouseLeave={() => setScrollbarVisible(false)}
+          onScroll={() => {
+            scrollTopRef.current = scrollRef.current?.scrollTop ?? 0
+            scheduleViewSave()
+            syncActiveHeading()
           }}
         >
-          {/* Mindmaps carry their title as the root pill on the canvas. */}
-          {!(studyChild && studyChild.type === 'mindmap') && (
-            <input
-              className="note__title"
-              value={note.title}
-              placeholder="Untitled"
-              spellCheck={false}
-              onChange={(event) => updateNote(note.id, { title: event.target.value })}
-              onKeyDown={(event) => {
-                // Keep Tab inside the note: jump into the body editor instead of
-                // tabbing back to the sidebar search box. Ctrl/Cmd+Tab stays
-                // reserved for the global tab switcher.
-                if (
-                  event.key === 'Tab' &&
-                  !event.shiftKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey
-                ) {
-                  const editor = noteRef.current?.querySelector<HTMLElement>('.note-editor')
-                  if (editor) {
-                    event.preventDefault()
-                    editor.focus()
+          <div
+            className="note__doc"
+            onContextMenu={(event) => {
+              // Right-click a markdown page to add individual children.
+              // Study (JSON) children take no subpages — leave native menu.
+              if (studyChild || pdfChild) return
+              // Right-click anywhere in the page offers Hidden-footer inserts.
+              // Let text inputs keep their native menu on small clicks? No —
+              // page-level Add actions are more useful here.
+              event.preventDefault()
+              setPageMenu({
+                x: Math.max(8, Math.min(event.clientX, window.innerWidth - 220)),
+                y: Math.max(8, Math.min(event.clientY, window.innerHeight - 280))
+              })
+            }}
+          >
+            {/* Mindmaps carry their title as the root pill on the canvas. */}
+            {!(studyChild && studyChild.type === 'mindmap') && (
+              <input
+                className="note__title"
+                value={note.title}
+                placeholder="Untitled"
+                spellCheck={false}
+                onChange={(event) => updateNote(note.id, { title: event.target.value })}
+                onKeyDown={(event) => {
+                  // Keep Tab inside the note: jump into the body editor instead of
+                  // tabbing back to the sidebar search box. Ctrl/Cmd+Tab stays
+                  // reserved for the global tab switcher.
+                  if (
+                    event.key === 'Tab' &&
+                    !event.shiftKey &&
+                    !event.ctrlKey &&
+                    !event.metaKey &&
+                    !event.altKey
+                  ) {
+                    const editor = noteRef.current?.querySelector<HTMLElement>('.note-editor')
+                    if (editor) {
+                      event.preventDefault()
+                      editor.focus()
+                    }
                   }
-                }
-              }}
-            />
-          )}
+                }}
+              />
+            )}
 
-          {pdfChild ? (
-            <PdfNoteView key={pdfChild.file} file={pdfChild.file} title={note.title} />
-          ) : studyChild ? (
-            <div className={`study study--child study--${studyChild.type}`}>
-              <div className="study__inner study__inner--child">
-                {studyChild.type === 'flashcards' ? (
-                  <FlashcardsChildView noteId={note.id} />
-                ) : studyChild.type === 'mindmap' ? (
-                  <MindmapChildView noteId={note.id} />
-                ) : (
-                  <QuizChildView noteId={note.id} />
-                )}
+            {pdfChild ? (
+              <PdfNoteView key={pdfChild.file} file={pdfChild.file} title={note.title} />
+            ) : studyChild ? (
+              <div className={`study study--child study--${studyChild.type}`}>
+                <div className="study__inner study__inner--child">
+                  {studyChild.type === 'flashcards' ? (
+                    <FlashcardsChildView noteId={note.id} />
+                  ) : studyChild.type === 'mindmap' ? (
+                    <MindmapChildView noteId={note.id} />
+                  ) : (
+                    <QuizChildView noteId={note.id} />
+                  )}
+                </div>
               </div>
-            </div>
-          ) : (
-            <NoteEditor
-              key={note.id}
-              value={body}
-              onChange={(nextBody) => {
-                const current = useAppStore.getState().notes.find((n) => n.id === note.id)
-                const split = splitHidden(current?.content ?? '')
-                updateNote(note.id, { content: joinHidden(nextBody, split.hidden) })
-              }}
-              placeholder="Write anything…  # heading · - list · 1. list · > quote · / commands · **bold**"
-              images={imagesControls}
-              onCreateChild={insertChildLink}
-              initialCaret={note.caret ?? null}
-            />
-          )}
+            ) : (
+              <NoteEditor
+                key={note.id}
+                value={body}
+                onChange={(nextBody) => {
+                  const current = useAppStore.getState().notes.find((n) => n.id === note.id)
+                  const split = splitHidden(current?.content ?? '')
+                  updateNote(note.id, { content: joinHidden(nextBody, split.hidden) })
+                }}
+                placeholder="Write anything…  # heading · - list · 1. list · > quote · / commands · **bold**"
+                images={imagesControls}
+                onCreateChild={insertChildLink}
+                initialCaret={note.caret ?? null}
+              />
+            )}
+          </div>
         </div>
       </div>
 

@@ -154,6 +154,22 @@ export type TaskFilter = 'all' | 'today' | 'overdue' | 'completed'
 /** Appearance: fixed dark/light, or follow the OS. */
 export type ThemeMode = 'dark' | 'light' | 'system'
 
+/** Note reading width: stretched to the pane, or a centered document column. */
+export type NoteLayout = 'full' | 'centered'
+
+/** Relative body text size inside a note. */
+export type NoteFontSize = 'small' | 'default' | 'large'
+
+/** Bounds for the centered document column. */
+export const NOTE_WIDTH_MIN = 560
+export const NOTE_WIDTH_MAX = 1200
+export const NOTE_WIDTH_DEFAULT = 820
+
+export function clampNoteWidth(width: unknown): number {
+  if (typeof width !== 'number' || Number.isNaN(width)) return NOTE_WIDTH_DEFAULT
+  return Math.min(NOTE_WIDTH_MAX, Math.max(NOTE_WIDTH_MIN, Math.round(width)))
+}
+
 /** Customizable blocks in the sidebar, top to bottom. */
 export type SidebarWidgetKey = 'today' | 'favorites' | 'notes'
 
@@ -278,6 +294,14 @@ interface AppState {
   ttsEnabled: boolean
   theme: ThemeMode
   sidebarWidth: number
+  /** Note page width: full pane (default) or a centered column. */
+  noteLayout: NoteLayout
+  /** Centered column width in px. Ignored in full-width layout. */
+  noteWidth: number
+  /** Body text scale shared by every note. */
+  noteFontSize: NoteFontSize
+  /** Show the Google-Docs-style sections/outline panel in notes. */
+  docTabsVisible: boolean
   /** Sidebar hidden (Notion-style collapse). Persists across sessions. */
   sidebarCollapsed: boolean
   /** Which sidebar widgets are visible. */
@@ -312,6 +336,10 @@ interface AppState {
   setTheme: (theme: ThemeMode) => void
   setSidebarWidth: (width: number) => void
   setSidebarCollapsed: (collapsed: boolean) => void
+  setNoteLayout: (layout: NoteLayout) => void
+  setNoteWidth: (width: number) => void
+  setNoteFontSize: (size: NoteFontSize) => void
+  setDocTabsVisible: (visible: boolean) => void
   dismissTodayEvent: (id: string) => void
   showTodayEvent: (id: string) => void
   showAllTodayEvents: () => void
@@ -1164,6 +1192,10 @@ export const useAppStore = create<AppState>()(
       ttsEnabled: true,
       theme: 'dark',
       sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
+      noteLayout: 'full',
+      noteWidth: NOTE_WIDTH_DEFAULT,
+      noteFontSize: 'default',
+      docTabsVisible: true,
       sidebarCollapsed: false,
       sidebarWidgets: { ...DEFAULT_SIDEBAR_WIDGETS },
       sidebarWidgetOrder: [...DEFAULT_SIDEBAR_WIDGET_ORDER],
@@ -1204,6 +1236,10 @@ export const useAppStore = create<AppState>()(
       setTheme: (theme) => set({ theme }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth: clampSidebarWidth(sidebarWidth) }),
       setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
+      setNoteLayout: (noteLayout) => set({ noteLayout }),
+      setNoteWidth: (noteWidth) => set({ noteWidth: clampNoteWidth(noteWidth) }),
+      setNoteFontSize: (noteFontSize) => set({ noteFontSize }),
+      setDocTabsVisible: (docTabsVisible) => set({ docTabsVisible }),
       dismissTodayEvent: (id) =>
         set((state) => ({
           dismissedTodayEvents: state.dismissedTodayEvents.includes(id)
@@ -2926,6 +2962,10 @@ export const useAppStore = create<AppState>()(
         ttsEnabled: state.ttsEnabled,
         theme: state.theme,
         sidebarWidth: state.sidebarWidth,
+        noteLayout: state.noteLayout,
+        noteWidth: state.noteWidth,
+        noteFontSize: state.noteFontSize,
+        docTabsVisible: state.docTabsVisible,
         sidebarCollapsed: state.sidebarCollapsed,
         sidebarWidgets: state.sidebarWidgets,
         sidebarWidgetOrder: state.sidebarWidgetOrder,
@@ -2998,6 +3038,10 @@ export const useAppStore = create<AppState>()(
             | 'ttsEnabled'
             | 'theme'
             | 'sidebarWidth'
+            | 'noteLayout'
+            | 'noteWidth'
+            | 'noteFontSize'
+            | 'docTabsVisible'
             | 'sidebarCollapsed'
             | 'sidebarWidgets'
             | 'sidebarWidgetOrder'
@@ -3260,6 +3304,13 @@ export const useAppStore = create<AppState>()(
           ttsEnabled: saved.ttsEnabled ?? true,
           theme: saved.theme === 'light' || saved.theme === 'system' ? saved.theme : 'dark',
           sidebarWidth: clampSidebarWidth(saved.sidebarWidth),
+          noteLayout: saved.noteLayout === 'centered' ? 'centered' : 'full',
+          noteWidth: clampNoteWidth(saved.noteWidth),
+          noteFontSize:
+            saved.noteFontSize === 'small' || saved.noteFontSize === 'large'
+              ? saved.noteFontSize
+              : 'default',
+          docTabsVisible: saved.docTabsVisible ?? true,
           sidebarCollapsed: saved.sidebarCollapsed ?? false,
           sidebarWidgets,
           sidebarWidgetOrder,
