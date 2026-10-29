@@ -823,6 +823,7 @@ function Sidebar(): React.JSX.Element {
   const [favDropHint, setFavDropHint] = useState<{ token: string; before: boolean } | null>(null)
   const favDragRef = useRef<string | null>(null)
   const [childMenu, setChildMenu] = useState<{ noteId: string; x: number; y: number } | null>(null)
+  const [newNoteMenu, setNewNoteMenu] = useState<{ x: number; y: number } | null>(null)
   const [spaceMenu, setSpaceMenu] = useState<{ x: number; y: number } | null>(null)
   const [spaceItemMenu, setSpaceItemMenu] = useState<{
     spaceId: string
@@ -1603,7 +1604,7 @@ function Sidebar(): React.JSX.Element {
         setMenu(null)
         setNavMenu(null)
         setChildMenu(null)
-        setSpaceMenu(null)
+        setNewNoteMenu(null)
         setSpaceItemMenu(null)
         setSpaceEditor(null)
         setTrashOpen(false)
@@ -1616,6 +1617,7 @@ function Sidebar(): React.JSX.Element {
     menu,
     navMenu,
     childMenu,
+    newNoteMenu,
     spaceMenu,
     spaceItemMenu,
     spaceEditor,
@@ -2547,18 +2549,12 @@ function Sidebar(): React.JSX.Element {
                   <button
                     type="button"
                     className="sidebar__icon-btn"
-                    title={activeSpace ? `Import PDF into ${activeSpace.name}` : 'Import PDF'}
-                    aria-label={activeSpace ? `Import PDF into ${activeSpace.name}` : 'Import PDF'}
-                    onClick={() => void importPdfPicker(activeSpaceId || undefined)}
-                  >
-                    <PdfIcon size={17} />
-                  </button>
-                  <button
-                    type="button"
-                    className="sidebar__icon-btn"
                     title={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
                     aria-label={activeSpace ? `New note in ${activeSpace.name}` : 'New note'}
-                    onClick={() => createNote()}
+                    onClick={(event) => {
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      setNewNoteMenu({ x: rect.left, y: rect.bottom + 4 })
+                    }}
                   >
                     <PlusIcon size={22} />
                   </button>
@@ -3046,6 +3042,78 @@ function Sidebar(): React.JSX.Element {
             </div>
           )
         })()}
+      {newNoteMenu && (
+        <div
+          className="note-menu note-menu--fixed"
+          role="menu"
+          aria-label="New item"
+          style={{ left: newNoteMenu.x, top: newNoteMenu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <p className="tabmenu__label">New</p>
+          <button
+            type="button"
+            className="note-menu__item"
+            onClick={() => {
+              createNote()
+              setNewNoteMenu(null)
+            }}
+          >
+            <FileTextIcon size={14} />
+            New note
+          </button>
+          <button
+            type="button"
+            className="note-menu__item"
+            onClick={() => {
+              void importPdfPicker(activeSpaceId || undefined)
+              setNewNoteMenu(null)
+            }}
+          >
+            <PdfIcon size={14} />
+            Import PDF
+          </button>
+          <button
+            type="button"
+            className="note-menu__item"
+            onClick={() => {
+              const id = createNote('Untitled set')
+              updateNote(id, { content: blankFlashcardsBody() })
+              useAppStore.getState().openNote(id)
+              setNewNoteMenu(null)
+            }}
+          >
+            <CardsIcon size={14} />
+            New flashcards
+          </button>
+          <button
+            type="button"
+            className="note-menu__item"
+            onClick={() => {
+              const id = createNote('Untitled mindmap')
+              updateNote(id, { content: blankMindmapBody() })
+              useAppStore.getState().openNote(id)
+              setNewNoteMenu(null)
+            }}
+          >
+            <MindmapIcon size={14} />
+            New mindmap
+          </button>
+          <button
+            type="button"
+            className="note-menu__item"
+            onClick={() => {
+              const id = createNote('Untitled quiz')
+              updateNote(id, { content: blankQuizBody() })
+              useAppStore.getState().openNote(id)
+              setNewNoteMenu(null)
+            }}
+          >
+            <QuizIcon size={14} />
+            New quiz (blank)
+          </button>
+        </div>
+      )}
       {navMenu &&
         (() => {
           const nav = NAV_BY_KEY[navMenu.key]
