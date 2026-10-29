@@ -212,7 +212,6 @@ class WakeListener(threading.Thread):
                 if samples is not None:
                     try:
                         text = normalize(run_whisper(WAKE_MODEL, samples))
-                        print(text)
                         if contains_wake_word(text):
                             self.detected.set()
                     except Exception as exc:  # noqa: BLE001
