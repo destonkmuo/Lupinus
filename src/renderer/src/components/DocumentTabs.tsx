@@ -59,7 +59,10 @@ function DocumentTabs({ content, activeIndex, onSelect }: DocumentTabsProps): Re
                     key={`${index}-${item.text}`}
                     type="button"
                     className={`doctabs__item${index === activeIndex ? ' is-active' : ''}`}
-                    style={{ marginLeft: `${(item.level - 1) * 12}px` }}
+                    style={{
+                      marginLeft: `${(item.level - 1) * 12}px`,
+                      marginRight: `${(item.level - 1) * 12}px`
+                    }}
                     title={item.text || 'Untitled heading'}
                     onClick={() => onSelect(index)}
                   >
