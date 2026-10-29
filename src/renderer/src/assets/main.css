@@ -3080,6 +3080,7 @@ button.note__crumb:hover {
   justify-content: center;
   width: 24px;
   height: 24px;
+  margin-right: -8px;
   border: none;
   border-radius: 6px;
   background: transparent;
