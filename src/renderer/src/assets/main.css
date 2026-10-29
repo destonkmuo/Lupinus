@@ -320,7 +320,6 @@ body {
   position: relative;
   background: var(--main-bg);
   border-color: var(--line);
-  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
 }
 
 /* Cover bar: masks the separator line (and the tab's own side-border feet)
