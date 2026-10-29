@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { beginSortableDrag, useSortableMakeSpace } from '../sortable'
 import { isInlineNav } from '../nav'
 import { TAB_GROUP_COLORS, useAppStore, type Tab } from '../store/appStore'
-import { FileTextIcon, PinIcon, PlusIcon, SidebarToggleIcon, XIcon } from './icons'
+import { FileTextIcon, PinIcon, PlusIcon, SidebarToggleIcon, XIcon, ChevronLeftIcon, ChevronRightIcon } from './icons'
 
 interface DropHint {
   id: string
@@ -46,6 +46,12 @@ function TabBar(): React.JSX.Element {
   const toggleTabGroupCollapsed = useAppStore((state) => state.toggleTabGroupCollapsed)
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed)
   const toggleSidebar = useAppStore((state) => state.toggleSidebar)
+  const tabHistory = useAppStore((state) => state.tabHistory)
+  const historyIndex = useAppStore((state) => state.historyIndex)
+  const canGoBack = historyIndex > 0
+  const canGoForward = historyIndex < tabHistory.length - 1
+  const goBackTab = useAppStore((state) => state.goBackTab)
+  const goForwardTab = useAppStore((state) => state.goForwardTab)
   const createNote = useAppStore((state) => state.createNote)
 
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -257,6 +263,7 @@ function TabBar(): React.JSX.Element {
   return (
     <div ref={tabbarRef} className="tabbar" role="tablist" aria-label="Open note tabs">
       {sidebarCollapsed && (
+        <>
         <button
           type="button"
           className="tabbar__new tabbar__sidebtn"
@@ -266,6 +273,27 @@ function TabBar(): React.JSX.Element {
         >
           <SidebarToggleIcon size={17} />
         </button>
+        <button
+          type="button"
+          className="tabbar__new tabbar__sidebtn"
+          title="Back to the previous tab"
+          aria-label="Back to the previous tab"
+          disabled={!canGoBack}
+          onClick={goBackTab}
+        >
+          <ChevronLeftIcon size={17} />
+        </button>
+        <button
+          type="button"
+          className="tabbar__new tabbar__sidebtn"
+          title="Forward to the next tab"
+          aria-label="Forward to the next tab"
+          disabled={!canGoForward}
+          onClick={goForwardTab}
+        >
+          <ChevronRightIcon size={17} />
+        </button>
+        </>
       )}
       <div
         className={`tabbar__list${tabs.length > 2 ? ' is-divided' : ''}`}
