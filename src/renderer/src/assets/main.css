@@ -2989,9 +2989,10 @@ button.note__crumb:hover {
   display: flex;
   flex: 1;
   flex-direction: column;
-  /* Fill the panel's content area (panel width minus its horizontal padding)
-     so right-hand padding is never clipped during collapse/expand. */
-  width: auto;
+  /* Fixed, slightly narrower than the panel so the outline is inset equally
+     on both sides; long text is truncated instead of overflowing. */
+  width: 228px;
+  margin: 0 auto;
   min-height: 0;
   transition:
     opacity 150ms ease,
@@ -3104,6 +3105,7 @@ button.note__crumb:hover {
 
 .doctabs__item {
   display: block;
+  width: 100%;
   padding: 4px 6px;
   border: none;
   border-radius: 5px;
